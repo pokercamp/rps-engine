@@ -1,12 +1,13 @@
 '''
 Simple example pokerbot, written in Python.
 '''
-from skeleton.actions import FoldAction, CallAction, CheckAction, RaiseAction
+from skeleton.actions import UpAction, DownAction
 from skeleton.states import GameState, TerminalState, RoundState
-from skeleton.states import NUM_ROUNDS, STARTING_STACK, BIG_BLIND, SMALL_BLIND
+from skeleton.states import NUM_ROUNDS, STARTING_STACK, ANTE, BET_SIZE
 from skeleton.bot import Bot
 from skeleton.runner import parse_args, run_bot
 
+import random
 
 class Player(Bot):
     '''
@@ -76,7 +77,7 @@ class Player(Bot):
         Returns:
         Your action.
         '''
-        legal_actions = round_state.legal_actions()  # the actions you are allowed to take
+        legal_actions = round_state.legal_actions() if isinstance(round_state, RoundState) else set()  # the actions you are allowed to take
         #street = round_state.street  # 0, 3, 4, or 5 representing pre-flop, flop, turn, or river respectively
         #my_cards = round_state.hands[active]  # your cards
         #board_cards = round_state.deck[:street]  # the board cards
@@ -91,9 +92,7 @@ class Player(Bot):
         #    min_raise, max_raise = round_state.raise_bounds()  # the smallest and largest numbers of chips for a legal bet/raise
         #    min_cost = min_raise - my_pip  # the cost of a minimum bet/raise
         #    max_cost = max_raise - my_pip  # the cost of a maximum bet/raise
-        if CheckAction in legal_actions:  # check-call
-            return CheckAction()
-        return CallAction()
+        return random.choice([UpAction(), DownAction()])
 
 
 if __name__ == '__main__':

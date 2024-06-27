@@ -3,11 +3,10 @@ The infrastructure for interacting with the engine.
 '''
 import argparse
 import socket
-from .actions import FoldAction, CallAction, CheckAction, RaiseAction
+from .actions import UpAction, DownAction
 from .states import GameState, TerminalState, RoundState
-from .states import STARTING_STACK, BIG_BLIND, SMALL_BLIND
+from .states import STARTING_STACK, ANTE, BET_SIZE
 from .bot import Bot
-
 
 class Runner():
     '''
@@ -32,14 +31,7 @@ class Runner():
         '''
         Encodes an action and sends it to the engine.
         '''
-        if isinstance(action, FoldAction):
-            code = 'F'
-        elif isinstance(action, CallAction):
-            code = 'C'
-        elif isinstance(action, CheckAction):
-            code = 'K'
-        else:  # isinstance(action, RaiseAction)
-            code = 'R' + str(action.amount)
+        code = 'U' if isinstance(action, UpAction) else 'D'
         self.socketfile.write(code + '\n')
         self.socketfile.flush()
 
@@ -52,59 +44,52 @@ class Runner():
         active = 0
         round_flag = True
         for packet in self.receive():
+            # print(packet)
             for clause in packet:
                 if clause[0] == 'T':
                     game_state = GameState(game_state.bankroll, float(clause[1:]), game_state.round_num)
                 elif clause[0] == 'P':
                     active = int(clause[1:])
                 elif clause[0] == 'H':
-                    hands = [[], []]
-                    hands[active] = clause[1:].split(',')
-                    pips = [SMALL_BLIND, BIG_BLIND]
-                    stacks = [STARTING_STACK - SMALL_BLIND, STARTING_STACK - BIG_BLIND]
-                    round_state = RoundState(0, 0, pips, stacks, hands, [], None)
+                    hands = [None, None]
+                    hands[active] = [] if clause[1:] == '' else [int(x) for x in clause[1:].split(',')]
+                    pips = [ANTE, ANTE]
+                    stacks = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
+                    round_state = RoundState(0, 0, pips, stacks, hands, None, None)
                     if round_flag:
                         self.pokerbot.handle_new_round(game_state, round_state, active)
                         round_flag = False
-                elif clause[0] == 'F':
-                    round_state = round_state.proceed(FoldAction())
-                elif clause[0] == 'C':
-                    round_state = round_state.proceed(CallAction())
-                elif clause[0] == 'K':
-                    round_state = round_state.proceed(CheckAction())
-                elif clause[0] == 'R':
-                    round_state = round_state.proceed(RaiseAction(int(clause[1:])))
-                elif clause[0] == 'B':
-                    round_state = RoundState(round_state.button, round_state.street, round_state.pips, round_state.stacks,
-                                             round_state.hands, clause[1:].split(','), round_state.previous_state)
+                elif clause[0] == 'D':  # Down action
+                    round_state = round_state.proceed(DownAction())
+                elif clause[0] == 'U':  # Up action
+                    round_state = round_state.proceed(UpAction())
                 elif clause[0] == 'O':
-                    # backtrack
                     round_state = round_state.previous_state
                     revised_hands = list(round_state.hands)
-                    revised_hands[1-active] = clause[1:].split(',')
-                    # rebuild history
+                    revised_hands[1-active] = int(clause[1:])
                     round_state = RoundState(round_state.button, round_state.street, round_state.pips, round_state.stacks,
                                              revised_hands, round_state.deck, round_state.previous_state)
-                    round_state = TerminalState([0, 0], round_state)
-                elif clause[0] == 'D':
-                    assert isinstance(round_state, TerminalState)
+                    # Don't call showdown here, wait for 'S' clause
+                elif clause[0] == 'S':  # Showdown
                     delta = int(clause[1:])
                     deltas = [-delta, -delta]
                     deltas[active] = delta
-                    round_state = TerminalState(deltas, round_state.previous_state)
+                    round_state = TerminalState(deltas, round_state)
                     game_state = GameState(game_state.bankroll + delta, game_state.game_clock, game_state.round_num)
                     self.pokerbot.handle_round_over(game_state, round_state, active)
                     game_state = GameState(game_state.bankroll, game_state.game_clock, game_state.round_num + 1)
                     round_flag = True
                 elif clause[0] == 'Q':
                     return
+                # print(clause)
+                # print(round_state)
             if round_flag:  # ack the engine
-                self.send(CheckAction())
+                self.send(DownAction())
             else:
-                assert active == round_state.button % 2
+                # print(f'{active} == {round_state.button % 2}')
+                # assert active == round_state.button % 2
                 action = self.pokerbot.get_action(game_state, round_state, active)
                 self.send(action)
-
 
 def parse_args():
     '''
