@@ -1,11 +1,2 @@
 __pycache__/
-A.txt
-B.txt
-gamelog.txt
-*.messages.player.txt
-*.messages.server.txt
-*.class
-.DS_Store
-.idea/
-.metadata/
 build/
