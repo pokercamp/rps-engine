@@ -1,6 +1,8 @@
 '''
-6.176 MIT POKERBOTS GAME ENGINE
-DO NOT REMOVE, RENAME, OR EDIT THIS FILE
+Poker Camp Game Engine
+(c) 2024 poker.camp; all rights reserved.
+
+Derived from: 6.176 MIT Pokerbots Game Engine at mitpokerbots/engine
 '''
 from collections import namedtuple
 from threading import Thread
@@ -237,7 +239,7 @@ class Player():
                 except TypeError:
                     pass
 
-    def query(self, round_state, player_message, game_log):
+    def query(self, round_state, player_message, game_log, message_log):
         legal_actions = round_state.legal_actions() if isinstance(round_state, RoundState) else set()
         if self.socketfile is not None and self.game_clock > 0.:
             clause = ''
@@ -245,11 +247,13 @@ class Player():
                 player_message[0] = 'T{:.3f}'.format(self.game_clock)
                 message = ' '.join(player_message) + '\n'
                 del player_message[1:]  # do not send redundant action history
+                message_log['server'].append(message.strip())
                 start_time = time.perf_counter()
                 self.socketfile.write(message)
                 self.socketfile.flush()
                 clause = self.socketfile.readline().strip()
                 end_time = time.perf_counter()
+                message_log['player'].append(clause)
                 if ENFORCE_GAME_CLOCK:
                     self.game_clock -= end_time - start_time
                 if self.game_clock <= 0.:
@@ -278,8 +282,9 @@ class Game():
     '''
 
     def __init__(self):
-        self.log = ['6.176 MIT Pokerbots - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
+        self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
         self.player_messages = [[], []]
+        self.message_log = [{'server': [], 'player': []} for _ in [0, 1]]
 
     def log_round_state(self, players, round_state):
         '''
@@ -340,24 +345,19 @@ class Game():
             self.log_round_state(players, round_state)
             active = round_state.button % 2
             player = players[active]
-            action = player.query(round_state, self.player_messages[active], self.log)
+            action = player.query(round_state, self.player_messages[active], self.log, self.message_log[active])
             self.log_action(player.name, action, False)
             round_state = round_state.proceed(action)
         self.log_terminal_state(players, round_state)
         for player, player_message, delta in zip(players, self.player_messages, round_state.deltas):
-            player.query(round_state, player_message, self.log)
+            player.query(round_state, player_message, self.log, self.message_log[active])
             player.bankroll += delta
 
     def run(self):
         '''
         Runs one game of poker.
         '''
-        print('   __  _____________  ___       __           __        __    ')
-        print('  /  |/  /  _/_  __/ / _ \\___  / /_____ ____/ /  ___  / /____')
-        print(' / /|_/ // /  / /   / ___/ _ \\/  \'_/ -_) __/ _ \\/ _ \\/ __(_-<')
-        print('/_/  /_/___/ /_/   /_/   \\___/_/\\_\\\\__/_/ /_.__/\\___/\\__/___/')
-        print()
-        print('Starting the Pokerbots engine...')
+        print('Starting the game engine...')
         players = [
             Player(PLAYER_1_NAME, PLAYER_1_PATH),
             Player(PLAYER_2_NAME, PLAYER_2_PATH)
@@ -378,6 +378,11 @@ class Game():
         print('Writing', name)
         with open(name, 'w') as log_file:
             log_file.write('\n'.join(self.log))
+        for active, server_messages_path, player_messages_path in [(0, PLAYER_1_SERVER_MESSAGES_PATH, PLAYER_1_PLAYER_MESSAGES_PATH), (1, PLAYER_2_SERVER_MESSAGES_PATH, PLAYER_2_PLAYER_MESSAGES_PATH)]:
+            with open(server_messages_path + '.txt', 'w') as log_file:
+                log_file.write('\n'.join(self.message_log[active]['server']))
+            with open(player_messages_path + '.txt', 'w') as log_file:
+                log_file.write('\n'.join(self.message_log[active]['player']))
 
 
 if __name__ == '__main__':
