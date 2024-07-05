@@ -4,6 +4,7 @@ Poker Camp Game Engine
 
 Derived from: 6.176 MIT Pokerbots Game Engine at mitpokerbots/engine
 '''
+import argparse
 from collections import namedtuple
 from threading import Thread
 from queue import Queue
@@ -144,6 +145,7 @@ class Player():
     def __init__(self, name, path):
         self.name = name
         self.path = path
+        self.stdout_path = f'{PLAYER_LOGS_PATH}/{name}.stdout.txt'
         self.game_clock = STARTING_GAME_CLOCK
         self.bankroll = 0
         self.commands = None
@@ -251,7 +253,7 @@ class Player():
                 self.bot_subprocess.kill()
                 outs, _ = self.bot_subprocess.communicate()
                 self.bytes_queue.put(outs)
-        with open(self.name + '.txt', 'wb') as log_file:
+        with open(self.stdout_path + '.txt', 'wb') as log_file:
             bytes_written = 0
             for output in self.bytes_queue.queue:
                 try:
@@ -335,7 +337,15 @@ class Game():
     Manages logging and the high-level game procedure.
     '''
 
-    def __init__(self):
+    def __init__(self, p1, p2):
+        global PLAYER_1_NAME, PLAYER_1_PATH, PLAYER_2_NAME, PLAYER_2_PATH
+        if p1 is not None:
+            PLAYER_1_NAME = p1[0]
+            PLAYER_1_PATH = p1[1]
+        if p2 is not None:
+            PLAYER_2_NAME = p2[0]
+            PLAYER_2_PATH = p2[1]
+        
         self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
 
     def log_round_state(self, players, round_state):
@@ -449,8 +459,8 @@ class Game():
         '''
         print('Starting the game engine...')
         players = [
-            Player(PLAYER_1_NAME, PLAYER_1_PATH),
-            Player(PLAYER_2_NAME, PLAYER_2_PATH)
+            Player(PLAYER_1_NAME, PLAYER_1_PATH, ),
+            Player(PLAYER_2_NAME, PLAYER_2_PATH, ),
         ]
         for player in players:
             player.build()
@@ -466,16 +476,28 @@ class Game():
         self.log.append('Final' + STATUS(players))
         for i, player in enumerate(players):
             player.stop(i)
+            
         name = GAME_LOG_FILENAME + '.txt'
         print('Writing', name)
         with open(name, 'w') as log_file:
             log_file.write('\n'.join(self.log))
-        for active, server_messages_path, player_messages_path in [(0, PLAYER_1_SERVER_MESSAGES_PATH, PLAYER_1_PLAYER_MESSAGES_PATH), (1, PLAYER_2_SERVER_MESSAGES_PATH, PLAYER_2_PLAYER_MESSAGES_PATH)]:
-            with open(server_messages_path + '.txt', 'w') as log_file:
+        for active, name in [
+            (0, PLAYER_1_NAME),
+            (1, PLAYER_2_NAME),
+        ]:
+            with open(f'{PLAYER_LOGS_PATH}/{name}.msg.server.txt', 'w') as log_file:
                 log_file.write('\n'.join(players[active].message_log))
-            with open(player_messages_path + '.txt', 'w') as log_file:
+            with open(f'{PLAYER_LOGS_PATH}/{name}.msg.player.txt', 'w') as log_file:
                 log_file.write('\n'.join(players[active].response_log))
-
+        
+        with open(f'{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}.txt', 'w') as score_file:
+            score_file.write('\n'.join([f'{p.name},{p.bankroll}' for p in players]))
 
 if __name__ == '__main__':
-    Game().run()
+    parser = argparse.ArgumentParser(description="Game engine with optional player arguments")
+    parser.add_argument('-p1', nargs=2, metavar=('NAME', 'FILE'), help='Name and executable for player 1')
+    parser.add_argument('-p2', nargs=2, metavar=('NAME', 'FILE'), help='Name and executable for player 2')
+
+    args = parser.parse_args()
+    
+    Game(args.p1, args.p2).run()
