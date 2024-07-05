@@ -2,6 +2,7 @@
 The infrastructure for interacting with the engine.
 '''
 import argparse
+import json
 import socket
 from .actions import UpAction, DownAction
 from .states import GameState, TerminalState, RoundState
@@ -22,17 +23,20 @@ class Runner():
         Generator for incoming messages from the engine.
         '''
         while True:
-            packet = self.socketfile.readline().strip().split(' ')
+            packet = self.socketfile.readline().strip()
             if not packet:
                 break
             yield packet
 
-    def send(self, action):
+    def send(self, action, seat):
         '''
         Encodes an action and sends it to the engine.
         '''
-        code = 'U' if isinstance(action, UpAction) else 'D'
-        self.socketfile.write(code + '\n')
+        self.socketfile.write(json.dumps({
+            'type': 'action',
+            'action': {'verb': 'U' if isinstance(action, UpAction) else 'D'},
+            'player': seat,
+        }) + '\n')
         self.socketfile.flush()
 
     def run(self):
@@ -41,55 +45,55 @@ class Runner():
         '''
         game_state = GameState(0, 0., 1)
         round_state = None
-        active = 0
-        round_flag = True
+        seat = 0
+        new_round_ready = True
         for packet in self.receive():
-            # print(packet)
-            for clause in packet:
-                if clause[0] == 'T':
-                    game_state = GameState(game_state.bankroll, float(clause[1:]), game_state.round_num)
-                elif clause[0] == 'P':
-                    active = int(clause[1:])
-                elif clause[0] == 'H':
-                    hands = [None, None]
-                    hands[active] = [] if clause[1:] == '' else [int(x) for x in clause[1:].split(',')]
-                    pips = [ANTE, ANTE]
-                    stacks = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
-                    round_state = RoundState(0, 0, pips, stacks, hands, None, None)
-                    if round_flag:
-                        self.pokerbot.handle_new_round(game_state, round_state, active)
-                        round_flag = False
-                elif clause[0] == 'D':  # Down action
-                    round_state = round_state.proceed(DownAction())
-                elif clause[0] == 'U':  # Up action
-                    round_state = round_state.proceed(UpAction())
-                elif clause[0] == 'O':
-                    round_state = round_state.previous_state
-                    revised_hands = list(round_state.hands)
-                    revised_hands[1-active] = int(clause[1:])
-                    round_state = RoundState(round_state.button, round_state.street, round_state.pips, round_state.stacks,
-                                             revised_hands, round_state.deck, round_state.previous_state)
-                    # Don't call showdown here, wait for 'S' clause
-                elif clause[0] == 'S':  # Showdown
-                    delta = int(clause[1:])
-                    deltas = [-delta, -delta]
-                    deltas[active] = delta
-                    round_state = TerminalState(deltas, round_state)
-                    game_state = GameState(game_state.bankroll + delta, game_state.game_clock, game_state.round_num)
-                    self.pokerbot.handle_round_over(game_state, round_state, active)
-                    game_state = GameState(game_state.bankroll, game_state.game_clock, game_state.round_num + 1)
-                    round_flag = True
-                elif clause[0] == 'Q':
-                    return
-                # print(clause)
-                # print(round_state)
-            if round_flag:  # ack the engine
-                self.send(DownAction())
-            else:
-                # print(f'{active} == {round_state.button % 2}')
-                # assert active == round_state.button % 2
-                action = self.pokerbot.get_action(game_state, round_state, active)
-                self.send(action)
+            # okay to accept a single json object
+            if packet[0] == '{':
+                packet = f'[{packet}]'
+            for message in json.loads(packet):
+                try:
+                    match message['type']:
+                        case 'hello':
+                            pass
+                        case 'time':
+                            game_state = GameState(game_state.bankroll, float(message['time']), game_state.round_num)
+                        case 'info':
+                            info = message['info']
+                            seat = int(info['seat'])
+                            if 'hands' not in info:
+                                info['hands'] = [None, None]
+                            if 'pips' not in info:
+                                info['pips'] = [ANTE, ANTE]
+                            if 'stacks' not in info:
+                                info['stacks'] = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
+                            round_state = RoundState(0, 0, info['pips'], info['stacks'], info['hands'], None, None)
+                            if 'new_game' in info and info['new_game']:
+                                self.pokerbot.handle_new_round(game_state, round_state, seat)
+                        case 'action':
+                            match message['action']['verb']:
+                                case 'U':
+                                    round_state = round_state.proceed(UpAction())
+                                case 'D':
+                                    round_state = round_state.proceed(DownAction())
+                                case _:
+                                    print(f'WARN Bad action type: {message}')
+                        case 'payoff':
+                            delta = message['payoff']
+                            deltas = [-delta, -delta]
+                            deltas[seat] = delta
+                            round_state = TerminalState(deltas, round_state)
+                            game_state = GameState(game_state.bankroll + delta, game_state.game_clock, game_state.round_num)
+                            self.pokerbot.handle_round_over(game_state, round_state, seat)
+                        case 'goodbye':
+                            return
+                        case _:
+                            print(f"WARN Bad message type: {message}")
+                except KeyError as e:
+                    print(f'WARN Message missing required field "{e}": {message}')
+                    continue
+            action = self.pokerbot.get_action(game_state, round_state, seat)
+            self.send(action, seat)
 
 def parse_args():
     '''

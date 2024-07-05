@@ -44,26 +44,41 @@ PCARDS = lambda card: '[{}]'.format(card)
 PVALUE = lambda name, value: ', {} ({})'.format(name, value)
 STATUS = lambda players: ''.join([PVALUE(p.name, p.bankroll) for p in players])
 
-# Socket encoding scheme:
+# A socket line may be a MESSAGE or a list of MESSAGEs. You are expected
+#  once to every newline.
 #
-# T#.### the player's game clock
-# P# the player's index
-# H**,** the player's hand in common format
-# U a up action in the round history
-# D a down action in the round history
-# B**,**,**,**,** the board cards in common format
-# O**,** the opponent's hand in common format
-# X### the player's bankroll delta from the round
-# Q game over
+# A MESSAGE is a json object with a 'type' field (STRING). Depending on
+#   the type, zero or more other fields may be required:
+# hello -> [no fields]
+# time -> time : FLOAT match timer remaining
+# info -> info : INFO_DICT information available to you
+# action -> action : ACTION_DICT, player : INT
+# payoff -> payoff : FLOAT incremental payoff to you
+# goodbye -> [no fields]
 #
-# Clauses are separated by spaces
-# Messages end with '\n'
-# The engine expects a response of K at the end of the round as an ack,
-# otherwise a response which encodes the player's action
-# Action history is sent once, including the player's actions
+# An INFO_DICT may include game-dependent fields; most games will have:
+# seat : INT your player number
+# new_game : optional BOOL, set to true if this message starts a new game
+# 
+# An ACTION_DICT includes a 'verb' field (STRING). Depending on the game,
+#   and possibly the verb, additional fields may be required or optional.
+# 
+# In the course of a game, you should receive:
+# info message with new_game = true
+# one or more action messages or info messages
+# a final info message
+# a payoff message
+# The actions report both players' actions (including yours) in order.
+#
+# A player takes an action by sending a legal action message. This is
+#  currently the only legal message for players to send.
 
+def message(type, **kwargs):
+    result = {'type': type}
+    result.update(kwargs)
+    return result
 
-class RoundState(namedtuple('_RoundState', ['button', 'street', 'pips', 'stacks', 'hands', 'deck', 'previous_state'])):
+class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'stacks', 'hands', 'deck', 'previous_state'])):
     def showdown(self):
         hands = self.hands
         pips = self.pips
@@ -87,14 +102,14 @@ class RoundState(namedtuple('_RoundState', ['button', 'street', 'pips', 'stacks'
         return self.showdown()  # Kuhn poker is single street
 
     def proceed(self, action):
-        active = self.button % 2
+        active = self.turn_number % 2
         inactive = 1 - active
         
         if isinstance(action, DownAction):
-            if self.button == 0:
+            if self.turn_number == 0:
                 # First player checks, continue to second player
-                return RoundState(self.button + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self)
-            elif self.button == 1:
+                return RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self)
+            elif self.turn_number == 1:
                 if self.pips[0] == self.pips[1]:
                     # Both players checked, go to showdown
                     return self.showdown()
@@ -103,7 +118,7 @@ class RoundState(namedtuple('_RoundState', ['button', 'street', 'pips', 'stacks'
                     return TerminalState([self.pips[1], -self.pips[1]], self)
             else:
                 # This is check-bet-fold
-                assert(self.button == 2)
+                assert(self.turn_number == 2)
                 return TerminalState([-self.pips[0], self.pips[0]], self)
         
         elif isinstance(action, UpAction):
@@ -113,13 +128,13 @@ class RoundState(namedtuple('_RoundState', ['button', 'street', 'pips', 'stacks'
                 # This is a bet
                 new_pips[active] += BET_SIZE
                 new_stacks[active] -= BET_SIZE
-                return RoundState(self.button + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self)
+                return RoundState(self.turn_number + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self)
             else:
                 # This is a call
                 new_pips[active] = new_pips[inactive]
                 new_stacks[active] -= (new_pips[active] - self.pips[active])
                 # Always go to showdown after a call
-                return RoundState(self.button + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self).showdown()
+                return RoundState(self.turn_number + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self).showdown()
 
 class Player():
     '''
@@ -135,6 +150,8 @@ class Player():
         self.bot_subprocess = None
         self.socketfile = None
         self.bytes_queue = Queue()
+        self.message_log = []
+        self.response_log = []
 
     def build(self):
         '''
@@ -200,6 +217,9 @@ class Player():
                         client_socket.settimeout(CONNECT_TIMEOUT)
                         sock = client_socket.makefile('rw')
                         self.socketfile = sock
+                        packet = json.dumps([message('hello')])+'\n'
+                        self.message_log.append(packet)
+                        self.socketfile.write(packet)
                         print(self.name, 'connected successfully')
             except (TypeError, ValueError):
                 print(self.name, 'run command misformatted')
@@ -208,13 +228,15 @@ class Player():
             except socket.timeout:
                 print('Timed out waiting for', self.name, 'to connect')
 
-    def stop(self):
+    def stop(self, as_player):
         '''
         Closes the socket connection and stops the pokerbot.
         '''
         if self.socketfile is not None:
             try:
-                self.socketfile.write('Q\n')
+                packet = json.dumps(player_messages[as_player] + [message('goodbye')])+'\n'
+                self.message_log.append(packet)
+                self.socketfile.write(packet)
                 self.socketfile.close()
             except socket.timeout:
                 print('Timed out waiting for', self.name, 'to disconnect')
@@ -239,26 +261,56 @@ class Player():
                 except TypeError:
                     pass
 
-    def query(self, round_state, player_message, game_log, message_log):
+    def query(self, round_state, player_message, game_log):
         legal_actions = round_state.legal_actions() if isinstance(round_state, RoundState) else set()
         if self.socketfile is not None and self.game_clock > 0.:
             clause = ''
             try:
-                player_message[0] = 'T{:.3f}'.format(self.game_clock)
-                message = ' '.join(player_message) + '\n'
-                del player_message[1:]  # do not send redundant action history
-                message_log['server'].append(message.strip())
+                player_message[0] = message(
+                    'time',
+                    time = round(self.game_clock, 3),
+                )
+                packet = json.dumps(player_message)
+                del player_message[1:]  # do not duplicate messages
+                self.message_log.append(packet)
                 start_time = time.perf_counter()
-                self.socketfile.write(message)
+                self.socketfile.write(packet + '\n')
                 self.socketfile.flush()
-                clause = self.socketfile.readline().strip()
+                response = self.socketfile.readline().strip()
                 end_time = time.perf_counter()
-                message_log['player'].append(clause)
+                self.response_log.append(packet)
                 if ENFORCE_GAME_CLOCK:
                     self.game_clock -= end_time - start_time
                 if self.game_clock <= 0.:
                     raise socket.timeout
-                action = DECODE[clause[0]]
+                
+                action = None
+                
+                if (len(response) > 0
+                    and (response[0] == '[' or response[0] == '{')
+                ):
+                    # okay to accept a single json object
+                    if response[0] == '{':
+                        response = f'[{response}]'
+                    for response in json.loads(response):
+                        try:
+                            match response['type']:
+                                case 'action':
+                                    match response['action']['verb']:
+                                        case 'U':
+                                            action = UpAction
+                                        case 'D':
+                                            action = DownAction
+                                        case _:
+                                            print(f'WARN Bad action verb: {response}')
+                                case _:
+                                    print(f"WARN Bad message type: {response}")
+                        except KeyError as e:
+                            print(f'WARN Message missing required field "{e}": {response}')
+                            continue
+                else:
+                    action = DECODE[clause[0]]
+                
                 if action in legal_actions:
                     return action()
                 game_log.append(self.name + ' attempted illegal ' + action.__name__)
@@ -276,6 +328,8 @@ class Player():
                 game_log.append(self.name + ' response misformatted: ' + str(clause))
         return DownAction() if DownAction in legal_actions else UpAction()
 
+player_messages = [[None], [None]]
+
 class Game():
     '''
     Manages logging and the high-level game procedure.
@@ -283,30 +337,43 @@ class Game():
 
     def __init__(self):
         self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
-        self.player_messages = [[], []]
-        self.message_log = [{'server': [], 'player': []} for _ in [0, 1]]
 
     def log_round_state(self, players, round_state):
         '''
         Incorporates RoundState information into the game log and player messages.
         '''
-        if round_state.street == 0 and round_state.button == 0:
+        if round_state.street == 0 and round_state.turn_number == 0:
             self.log.append('{} posts the ante of {}'.format(players[0].name, ANTE))
             self.log.append('{} posts the ante of {}'.format(players[1].name, ANTE))
             self.log.append('{} dealt {}'.format(players[0].name, PCARDS(round_state.hands[0])))
             self.log.append('{} dealt {}'.format(players[1].name, PCARDS(round_state.hands[1])))
-            self.player_messages[0] = ['T0.', 'P0', 'H' + CCARDS(round_state.hands[0])]
-            self.player_messages[1] = ['T0.', 'P1', 'H' + CCARDS(round_state.hands[1])]
-        elif round_state.street > 0 and round_state.button == 1:
+            player_messages[0].append(message('info', info={
+                    'seat': 0,
+                    'hands': [round_state.hands[0], None],
+                    'new_game': True,
+            }))
+            player_messages[1].append(message('info', info={
+                    'seat': 1,
+                    'hands': [round_state.hands[1], None],
+                    'new_game': True,
+            }))
+        elif round_state.street > 0 and round_state.turn_number == 1:
             board = round_state.deck.peek(round_state.street)
             self.log.append(STREET_NAMES[round_state.street - 3] + ' ' + PCARDS(board) +
                             PVALUE(players[0].name, STARTING_STACK-round_state.stacks[0]) +
                             PVALUE(players[1].name, STARTING_STACK-round_state.stacks[1]))
-            compressed_board = 'B' + CCARDS(board)
-            self.player_messages[0].append(compressed_board)
-            self.player_messages[1].append(compressed_board)
+            player_messages[0].append(messages('info', info = {
+                'seat': 0,
+                'hands': [round_state.hands[0], None],
+                'board': board,
+            }))
+            player_messages[1].append(messages('info', info = {
+                'seat': 1,
+                'hands': [None, round_state.hands[1]],
+                'board': board,
+            }))
 
-    def log_action(self, name, action, bet_override):
+    def log_action(self, name, action, seat, bet_override):
         '''
         Incorporates action information into the game log and player messages.
         '''
@@ -317,8 +384,16 @@ class Game():
             phrasing = ' down'
             code = 'D'
         self.log.append(name + phrasing)
-        self.player_messages[0].append(code)
-        self.player_messages[1].append(code)
+        player_messages[0].append(message(
+            'action',
+            action = {'verb': code},
+            player = seat,
+        ))
+        player_messages[1].append(message(
+            'action',
+            action = {'verb': code},
+            player = seat,
+        ))
 
     def log_terminal_state(self, players, round_state):
         '''
@@ -328,12 +403,24 @@ class Game():
         if round_state.previous_state.pips[0] == round_state.previous_state.pips[1]:
             self.log.append('{} shows {}'.format(players[0].name, PCARDS(previous_state.hands[0])))
             self.log.append('{} shows {}'.format(players[1].name, PCARDS(previous_state.hands[1])))
-            self.player_messages[0].append('O' + CCARDS(previous_state.hands[1]))
-            self.player_messages[1].append('O' + CCARDS(previous_state.hands[0]))
+            player_messages[0].append(message('info', info = {
+                'seat': 0,
+                'hands': previous_state.hands,
+            }))
+            player_messages[1].append(message('info', info = {
+                'seat': 1,
+                'hands': previous_state.hands,
+            }))
         self.log.append('{} awarded {}'.format(players[0].name, round_state.deltas[0]))
         self.log.append('{} awarded {}'.format(players[1].name, round_state.deltas[1]))
-        self.player_messages[0].append('X' + str(round_state.deltas[0]))
-        self.player_messages[1].append('X' + str(round_state.deltas[1]))
+        player_messages[0].append(message(
+            'payoff',
+            payoff = round_state.deltas[0],
+        ))
+        player_messages[1].append(message(
+            'payoff',
+            payoff = round_state.deltas[1],
+        ))
 
     def run_round(self, players):
         deck = KuhnDeck()
@@ -343,14 +430,17 @@ class Game():
         round_state = RoundState(0, 0, pips, stacks, hands, deck, None)
         while not isinstance(round_state, TerminalState):
             self.log_round_state(players, round_state)
-            active = round_state.button % 2
+            active = round_state.turn_number % 2
             player = players[active]
-            action = player.query(round_state, self.player_messages[active], self.log, self.message_log[active])
-            self.log_action(player.name, action, False)
+            action = player.query(
+                round_state,
+                player_messages[active],
+                self.log,
+            )
+            self.log_action(player.name, action, active, False)
             round_state = round_state.proceed(action)
         self.log_terminal_state(players, round_state)
-        for player, player_message, delta in zip(players, self.player_messages, round_state.deltas):
-            player.query(round_state, player_message, self.log, self.message_log[active])
+        for player, player_message, delta in zip(players, player_messages, round_state.deltas):
             player.bankroll += delta
 
     def run(self):
@@ -370,19 +460,21 @@ class Game():
             self.log.append('Round #' + str(round_num) + STATUS(players))
             self.run_round(players)
             players = players[::-1]
+            global player_messages
+            player_messages = player_messages[::-1]
         self.log.append('')
         self.log.append('Final' + STATUS(players))
-        for player in players:
-            player.stop()
+        for i, player in enumerate(players):
+            player.stop(i)
         name = GAME_LOG_FILENAME + '.txt'
         print('Writing', name)
         with open(name, 'w') as log_file:
             log_file.write('\n'.join(self.log))
         for active, server_messages_path, player_messages_path in [(0, PLAYER_1_SERVER_MESSAGES_PATH, PLAYER_1_PLAYER_MESSAGES_PATH), (1, PLAYER_2_SERVER_MESSAGES_PATH, PLAYER_2_PLAYER_MESSAGES_PATH)]:
             with open(server_messages_path + '.txt', 'w') as log_file:
-                log_file.write('\n'.join(self.message_log[active]['server']))
+                log_file.write('\n'.join(players[active].message_log))
             with open(player_messages_path + '.txt', 'w') as log_file:
-                log_file.write('\n'.join(self.message_log[active]['player']))
+                log_file.write('\n'.join(players[active].response_log))
 
 
 if __name__ == '__main__':
