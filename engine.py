@@ -253,7 +253,7 @@ class Player():
                 self.bot_subprocess.kill()
                 outs, _ = self.bot_subprocess.communicate()
                 self.bytes_queue.put(outs)
-        with open(self.stdout_path + '.txt', 'wb') as log_file:
+        with open(self.stdout_path, 'wb') as log_file:
             bytes_written = 0
             for output in self.bytes_queue.queue:
                 try:
