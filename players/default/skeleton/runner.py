@@ -69,7 +69,6 @@ class Runner():
                             if 'stacks' not in info:
                                 info['stacks'] = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
                             new_game = 'new_game' in info and info['new_game']
-                            end_game = 'end_game' in info and info['end_game']
                             
                             if 'new_game' in info and info['new_game']:
                                 round_state = None # this will become previous_state
@@ -83,8 +82,6 @@ class Runner():
                                 None if new_game else round_state,
                             )
                             
-                            if end_game:
-                                self.pokerbot.handle_round_over(game_state, round_state, seat)
                             if new_game:
                                 self.pokerbot.handle_new_round(game_state, round_state, seat)
                         

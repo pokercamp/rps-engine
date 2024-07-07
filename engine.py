@@ -47,7 +47,7 @@ PVALUE = lambda name, value: f', {name} ({value:+d})'
 STATUS = lambda players: ''.join([PVALUE(p.name, p.bankroll) for p in players])
 
 # A socket line may be a MESSAGE or a list of MESSAGEs. You are expected
-#  once to every newline.
+# to respond once to every newline.
 #
 # A MESSAGE is a json object with a 'type' field (STRING). Depending on
 #   the type, zero or more other fields may be required:
@@ -62,13 +62,16 @@ STATUS = lambda players: ''.join([PVALUE(p.name, p.bankroll) for p in players])
 # seat : INT your player number
 # new_game : optional BOOL, set to true if this message starts a new game
 # 
-# An ACTION_DICT includes a 'verb' field (STRING). Depending on the game,
-#   and possibly the verb, additional fields may be required or optional.
+# An ACTION_DICT includes a 'verb' field (STRING). Depending on the
+#   game, and possibly the verb, additional fields may be required or
+#   optional.
+# ACTION_DICTs sent by the server always include a 'seat' field (INT)
+#   which identifies which player acted. This field is optional for
+#   messages you send.
 # 
-# In the course of a game, you should receive:
+# In the course of a round, you should receive:
 # info message with new_game = true
 # one or more action messages or info messages
-# a final info message
 # a payoff message
 # The actions report both players' actions (including yours) in order.
 #
@@ -404,7 +407,7 @@ class Game():
             player.append(message(
                 'action',
                 action = {'verb': code},
-                player = seat,
+                seat = seat,
             ))
 
     def log_terminal_state(self, players, round_state):
@@ -418,7 +421,6 @@ class Game():
                 player.append(message('info', info = {
                     'seat': seat,
                     'hands': previous_state.hands,
-                    'end_game': True,
                 }))
         for seat, player in enumerate(players):
             self.log.append(f'{player.name} awarded {round_state.deltas[seat]:+d}')
