@@ -56,8 +56,10 @@ class Runner():
                     match message['type']:
                         case 'hello':
                             pass
+                        
                         case 'time':
                             game_state = GameState(game_state.bankroll, float(message['time']), game_state.round_num)
+                        
                         case 'info':
                             info = message['info']
                             seat = int(info['seat'])
@@ -67,9 +69,26 @@ class Runner():
                                 info['pips'] = [ANTE, ANTE]
                             if 'stacks' not in info:
                                 info['stacks'] = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
-                            round_state = RoundState(0, 0, info['pips'], info['stacks'], info['hands'], None, None)
+                            new_game = 'new_game' in info and info['new_game']
+                            end_game = 'end_game' in info and info['end_game']
+                            
                             if 'new_game' in info and info['new_game']:
+                                round_state = None # this will become previous_state
+                            round_state = RoundState(
+                                0,
+                                0,
+                                info['pips'],
+                                info['stacks'],
+                                info['hands'],
+                                None,
+                                None if new_game else round_state,
+                            )
+                            
+                            if end_game:
+                                self.pokerbot.handle_round_over(game_state, round_state, seat)
+                            if new_game:
                                 self.pokerbot.handle_new_round(game_state, round_state, seat)
+                        
                         case 'action':
                             match message['action']['verb']:
                                 case 'U':
@@ -78,6 +97,7 @@ class Runner():
                                     round_state = round_state.proceed(DownAction())
                                 case _:
                                     print(f'WARN Bad action type: {message}')
+                        
                         case 'payoff':
                             delta = message['payoff']
                             deltas = [-delta, -delta]
@@ -85,10 +105,13 @@ class Runner():
                             round_state = TerminalState(deltas, round_state)
                             game_state = GameState(game_state.bankroll + delta, game_state.game_clock, game_state.round_num)
                             self.pokerbot.handle_round_over(game_state, round_state, seat)
+                        
                         case 'goodbye':
                             return
+                    
                         case _:
                             print(f"WARN Bad message type: {message}")
+                        
                 except KeyError as e:
                     print(f'WARN Message missing required field "{e}": {message}')
                     continue

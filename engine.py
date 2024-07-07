@@ -418,6 +418,7 @@ class Game():
                 player.append(message('info', info = {
                     'seat': seat,
                     'hands': previous_state.hands,
+                    'end_game': True,
                 }))
         for seat, player in enumerate(players):
             self.log.append(f'{player.name} awarded {round_state.deltas[seat]:+d}')
