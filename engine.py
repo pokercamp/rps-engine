@@ -226,7 +226,7 @@ class Player():
                         client_socket.settimeout(CONNECT_TIMEOUT)
                         sock = client_socket.makefile('rw')
                         self.socketfile = sock
-                        self.messages.append(message('hello'))
+                        self.append(message('hello'))
                         print(self.name, 'connected successfully')
             except (TypeError, ValueError):
                 print(self.name, 'run command misformatted')
@@ -241,8 +241,7 @@ class Player():
         '''
         if self.socketfile is not None:
             try:
-                packet = json.dumps(self.messages + [message('goodbye')])
-                self.messages.append(message('goodbye'))
+                self.append(message('goodbye'))
                 self.query(None, None, wait=False)
                 self.socketfile.close()
             except socket.timeout:
@@ -267,6 +266,9 @@ class Player():
                         break
                 except TypeError:
                     pass
+
+    def append(self, msg):
+        self.messages.append(msg)
 
     def query(self, round_state, game_log, *, wait=True):
         legal_actions = round_state.legal_actions() if isinstance(round_state, RoundState) else set()
@@ -364,7 +366,7 @@ class Game():
                 self.log.append(f'{player.name} posts the ante of {ANTE}')
             for seat, player in enumerate(players):
                 self.log.append(f'{player.name} dealt {PCARDS(round_state.hands[seat])}')
-                player.messages.append(message('info', info={
+                player.append(message('info', info={
                         'seat': seat,
                         'hands': round_state.visible_hands(seat),
                         'new_game': True,
@@ -381,7 +383,7 @@ class Game():
                 )
             )
             for seat, player in enumerate(players):
-                player.messages.append(messages('info', info = {
+                player.append(messages('info', info = {
                     'seat': seat,
                     'hands': [round_state.visible_hands(seat), None],
                     'board': board,
@@ -399,7 +401,7 @@ class Game():
             code = 'D'
         self.log.append(players[seat].name + phrasing)
         for player in players:
-            player.messages.append(message(
+            player.append(message(
                 'action',
                 action = {'verb': code},
                 player = seat,
@@ -413,13 +415,13 @@ class Game():
         if round_state.previous_state.pips[0] == round_state.previous_state.pips[1]:
             for seat, player in enumerate(players):
                 self.log.append(f'{player.name} shows {PCARDS(previous_state.hands[seat])}')
-                player.messages.append(message('info', info = {
+                player.append(message('info', info = {
                     'seat': seat,
                     'hands': previous_state.hands,
                 }))
         for seat, player in enumerate(players):
             self.log.append(f'{player.name} awarded {round_state.deltas[seat]:+d}')
-            player.messages.append(message(
+            player.append(message(
                 'payoff',
                 payoff = round_state.deltas[seat],
             ))
