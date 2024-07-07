@@ -13,7 +13,7 @@ ANTE = 1
 BET_SIZE = 1
 
 
-class RoundState(namedtuple('_RoundState', ['button', 'street', 'pips', 'stacks', 'hands', 'deck', 'previous_state'])):
+class RoundState(namedtuple('_RoundState', ['turn', 'street', 'pips', 'stacks', 'hands', 'deck', 'previous_state'])):
     def showdown(self):
         hands = self.hands
         pips = self.pips
@@ -40,14 +40,14 @@ class RoundState(namedtuple('_RoundState', ['button', 'street', 'pips', 'stacks'
         return self.showdown()  # Kuhn poker is single street
 
     def proceed(self, action):
-        active = self.button % 2
+        active = self.turn % 2
         inactive = 1 - active
         
         if isinstance(action, DownAction):
-            if self.button == 0:
+            if self.turn == 0:
                 # First player checks, continue to second player
-                return RoundState(self.button + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self)
-            elif self.button == 1:
+                return RoundState(self.turn + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self)
+            elif self.turn == 1:
                 if self.pips[0] == self.pips[1]:
                     # Both players checked, go to showdown
                     return self.showdown()
@@ -56,7 +56,7 @@ class RoundState(namedtuple('_RoundState', ['button', 'street', 'pips', 'stacks'
                     return TerminalState([self.pips[1], -self.pips[1]], self)
             else:
                 # This is check-bet-fold
-                assert(self.button == 2)
+                assert(self.turn == 2)
                 return TerminalState([-self.pips[0], self.pips[0]], self)
         
         elif isinstance(action, UpAction):
@@ -66,10 +66,11 @@ class RoundState(namedtuple('_RoundState', ['button', 'street', 'pips', 'stacks'
                 # This is a bet
                 new_pips[active] += BET_SIZE
                 new_stacks[active] -= BET_SIZE
-                return RoundState(self.button + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self)
+                return RoundState(self.turn + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self)
             else:
                 # This is a call
                 new_pips[active] = new_pips[inactive]
                 new_stacks[active] -= (new_pips[active] - self.pips[active])
                 # Always go to showdown after a call
-                return RoundState(self.button + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self).showdown()
+                return RoundState(self.turn + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self).showdown()
+                

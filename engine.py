@@ -10,6 +10,7 @@ from threading import Thread
 from queue import Queue
 import time
 import json
+from pathlib import Path
 import subprocess
 import socket
 # import eval7
@@ -142,14 +143,15 @@ class Player():
     Handles subprocess and socket interactions with one player's pokerbot.
     '''
 
-    def __init__(self, name, path):
+    def __init__(self, name, path, output_dir):
         self.name = name
         self.path = path
-        self.stdout_path = f'{PLAYER_LOGS_PATH}/{name}.stdout.txt'
+        self.stdout_path = f'{output_dir}/{self.name}.stdout.txt'
         self.game_clock = STARTING_GAME_CLOCK
         self.bankroll = 0
         self.commands = None
         self.bot_subprocess = None
+        self.messages = [message('time', time=30.)]
         self.socketfile = None
         self.bytes_queue = Queue()
         self.message_log = []
@@ -219,9 +221,7 @@ class Player():
                         client_socket.settimeout(CONNECT_TIMEOUT)
                         sock = client_socket.makefile('rw')
                         self.socketfile = sock
-                        packet = json.dumps([message('hello')])+'\n'
-                        self.message_log.append(packet)
-                        self.socketfile.write(packet)
+                        self.messages.append(message('hello'))
                         print(self.name, 'connected successfully')
             except (TypeError, ValueError):
                 print(self.name, 'run command misformatted')
@@ -236,9 +236,9 @@ class Player():
         '''
         if self.socketfile is not None:
             try:
-                packet = json.dumps(player_messages[as_player] + [message('goodbye')])+'\n'
-                self.message_log.append(packet)
-                self.socketfile.write(packet)
+                packet = json.dumps(self.messages + [message('goodbye')])
+                self.messages.append(message('goodbye'))
+                self.query(None, None, wait=False)
                 self.socketfile.close()
             except socket.timeout:
                 print('Timed out waiting for', self.name, 'to disconnect')
@@ -263,24 +263,26 @@ class Player():
                 except TypeError:
                     pass
 
-    def query(self, round_state, player_message, game_log):
+    def query(self, round_state, game_log, *, wait=True):
         legal_actions = round_state.legal_actions() if isinstance(round_state, RoundState) else set()
-        if self.socketfile is not None and self.game_clock > 0.:
+        if self.socketfile is not None and (self.game_clock > 0. or not wait):
             clause = ''
             try:
-                player_message[0] = message(
+                self.messages[0] = message(
                     'time',
                     time = round(self.game_clock, 3),
                 )
-                packet = json.dumps(player_message)
-                del player_message[1:]  # do not duplicate messages
+                packet = json.dumps(self.messages)
+                del self.messages[1:]  # do not duplicate messages
                 self.message_log.append(packet)
                 start_time = time.perf_counter()
                 self.socketfile.write(packet + '\n')
                 self.socketfile.flush()
+                if not wait:
+                    return None
                 response = self.socketfile.readline().strip()
                 end_time = time.perf_counter()
-                self.response_log.append(packet)
+                self.response_log.append(response)
                 if ENFORCE_GAME_CLOCK:
                     self.game_clock -= end_time - start_time
                 if self.game_clock <= 0.:
@@ -330,21 +332,21 @@ class Player():
                 game_log.append(self.name + ' response misformatted: ' + str(clause))
         return DownAction() if DownAction in legal_actions else UpAction()
 
-player_messages = [[None], [None]]
-
 class Game():
     '''
     Manages logging and the high-level game procedure.
     '''
 
-    def __init__(self, p1, p2):
-        global PLAYER_1_NAME, PLAYER_1_PATH, PLAYER_2_NAME, PLAYER_2_PATH
+    def __init__(self, p1, p2, output_path):
+        global PLAYER_1_NAME, PLAYER_1_PATH, PLAYER_2_NAME, LOGS_PATH, PLAYER_2_PATH
         if p1 is not None:
             PLAYER_1_NAME = p1[0]
             PLAYER_1_PATH = p1[1]
         if p2 is not None:
             PLAYER_2_NAME = p2[0]
             PLAYER_2_PATH = p2[1]
+        if output_path is not None:
+            LOGS_PATH = output_path
         
         self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
 
@@ -357,14 +359,14 @@ class Game():
             self.log.append('{} posts the ante of {}'.format(players[1].name, ANTE))
             self.log.append('{} dealt {}'.format(players[0].name, PCARDS(round_state.hands[0])))
             self.log.append('{} dealt {}'.format(players[1].name, PCARDS(round_state.hands[1])))
-            player_messages[0].append(message('info', info={
+            players[0].messages.append(message('info', info={
                     'seat': 0,
                     'hands': [round_state.hands[0], None],
                     'new_game': True,
             }))
-            player_messages[1].append(message('info', info={
+            players[1].messages.append(message('info', info={
                     'seat': 1,
-                    'hands': [round_state.hands[1], None],
+                    'hands': [None, round_state.hands[1]],
                     'new_game': True,
             }))
         elif round_state.street > 0 and round_state.turn_number == 1:
@@ -372,18 +374,18 @@ class Game():
             self.log.append(STREET_NAMES[round_state.street - 3] + ' ' + PCARDS(board) +
                             PVALUE(players[0].name, STARTING_STACK-round_state.stacks[0]) +
                             PVALUE(players[1].name, STARTING_STACK-round_state.stacks[1]))
-            player_messages[0].append(messages('info', info = {
+            players[0].messages.append(messages('info', info = {
                 'seat': 0,
                 'hands': [round_state.hands[0], None],
                 'board': board,
             }))
-            player_messages[1].append(messages('info', info = {
+            players[1].messages.append(messages('info', info = {
                 'seat': 1,
                 'hands': [None, round_state.hands[1]],
                 'board': board,
             }))
 
-    def log_action(self, name, action, seat, bet_override):
+    def log_action(self, players, seat, action):
         '''
         Incorporates action information into the game log and player messages.
         '''
@@ -393,13 +395,13 @@ class Game():
         else:  # isinstance(action, DownAction)
             phrasing = ' down'
             code = 'D'
-        self.log.append(name + phrasing)
-        player_messages[0].append(message(
+        self.log.append(players[seat].name + phrasing)
+        players[0].messages.append(message(
             'action',
             action = {'verb': code},
             player = seat,
         ))
-        player_messages[1].append(message(
+        players[1].messages.append(message(
             'action',
             action = {'verb': code},
             player = seat,
@@ -413,21 +415,21 @@ class Game():
         if round_state.previous_state.pips[0] == round_state.previous_state.pips[1]:
             self.log.append('{} shows {}'.format(players[0].name, PCARDS(previous_state.hands[0])))
             self.log.append('{} shows {}'.format(players[1].name, PCARDS(previous_state.hands[1])))
-            player_messages[0].append(message('info', info = {
+            players[0].messages.append(message('info', info = {
                 'seat': 0,
                 'hands': previous_state.hands,
             }))
-            player_messages[1].append(message('info', info = {
+            players[1].messages.append(message('info', info = {
                 'seat': 1,
                 'hands': previous_state.hands,
             }))
         self.log.append('{} awarded {}'.format(players[0].name, round_state.deltas[0]))
         self.log.append('{} awarded {}'.format(players[1].name, round_state.deltas[1]))
-        player_messages[0].append(message(
+        players[0].messages.append(message(
             'payoff',
             payoff = round_state.deltas[0],
         ))
-        player_messages[1].append(message(
+        players[1].messages.append(message(
             'payoff',
             payoff = round_state.deltas[1],
         ))
@@ -444,23 +446,24 @@ class Game():
             player = players[active]
             action = player.query(
                 round_state,
-                player_messages[active],
                 self.log,
             )
-            self.log_action(player.name, action, active, False)
+            self.log_action(players, active, action)
             round_state = round_state.proceed(action)
         self.log_terminal_state(players, round_state)
-        for player, player_message, delta in zip(players, player_messages, round_state.deltas):
+        for player, delta in zip(players, round_state.deltas):
             player.bankroll += delta
 
     def run(self):
         '''
-        Runs one game of poker.
+        Runs one match of poker.
         '''
         print('Starting the game engine...')
+        MATCH_DIR = f'{LOGS_PATH}/{PLAYER_1_NAME}.{PLAYER_2_NAME}'
+        Path(MATCH_DIR).mkdir(parents=True, exist_ok=True)
         players = [
-            Player(PLAYER_1_NAME, PLAYER_1_PATH, ),
-            Player(PLAYER_2_NAME, PLAYER_2_PATH, ),
+            Player(PLAYER_1_NAME, PLAYER_1_PATH, MATCH_DIR, ),
+            Player(PLAYER_2_NAME, PLAYER_2_PATH, MATCH_DIR, ),
         ]
         for player in players:
             player.build()
@@ -470,34 +473,33 @@ class Game():
             self.log.append('Round #' + str(round_num) + STATUS(players))
             self.run_round(players)
             players = players[::-1]
-            global player_messages
-            player_messages = player_messages[::-1]
         self.log.append('')
         self.log.append('Final' + STATUS(players))
         for i, player in enumerate(players):
             player.stop(i)
             
-        name = GAME_LOG_FILENAME + '.txt'
-        print('Writing', name)
-        with open(name, 'w') as log_file:
+        print('Writing logs...')
+        
+        with open(f'{MATCH_DIR}/{GAME_LOG_FILENAME}.txt', 'w') as log_file:
             log_file.write('\n'.join(self.log))
         for active, name in [
             (0, PLAYER_1_NAME),
             (1, PLAYER_2_NAME),
         ]:
-            with open(f'{PLAYER_LOGS_PATH}/{name}.msg.server.txt', 'w') as log_file:
+            with open(f'{MATCH_DIR}/{name}.msg.server.txt', 'w') as log_file:
                 log_file.write('\n'.join(players[active].message_log))
-            with open(f'{PLAYER_LOGS_PATH}/{name}.msg.player.txt', 'w') as log_file:
+            with open(f'{MATCH_DIR}/{name}.msg.player.txt', 'w') as log_file:
                 log_file.write('\n'.join(players[active].response_log))
         
-        with open(f'{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}.txt', 'w') as score_file:
+        with open(f'{LOGS_PATH}/{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}.txt', 'w') as score_file:
             score_file.write('\n'.join([f'{p.name},{p.bankroll}' for p in players]))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Game engine with optional player arguments")
     parser.add_argument('-p1', nargs=2, metavar=('NAME', 'FILE'), help='Name and executable for player 1')
     parser.add_argument('-p2', nargs=2, metavar=('NAME', 'FILE'), help='Name and executable for player 2')
+    parser.add_argument("-o", "--output", required=True, default="logs", help="Output directory for game results")
 
     args = parser.parse_args()
     
-    Game(args.p1, args.p2).run()
+    Game(args.p1, args.p2, args.output).run()
