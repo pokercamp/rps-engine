@@ -18,6 +18,8 @@ def run_games(players_csv, output_dir):
     for p1, p2 in product(players, repeat=2):
         p1_name, p1_path = p1
         p2_name, p2_path = p2
+        if p1_name == p2_name and p1_path == p2_path:
+            continue
         cmd = f"python engine.py -p1 {p1_name} {p1_path} -p2 {p2_name} {p2_path} -o {output_dir}"
         subprocess.run(cmd, shell=True, executable='/bin/bash')
 

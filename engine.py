@@ -43,7 +43,7 @@ STREET_NAMES = []
 DECODE = {'U': UpAction, 'D': DownAction}
 CCARDS = lambda card: '{}'.format(card)
 PCARDS = lambda card: '[{}]'.format(card)
-PVALUE = lambda name, value: ', {} ({})'.format(name, value)
+PVALUE = lambda name, value: f', {name} ({value:+d})'
 STATUS = lambda players: ''.join([PVALUE(p.name, p.bankroll) for p in players])
 
 # A socket line may be a MESSAGE or a list of MESSAGEs. You are expected
@@ -93,6 +93,11 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         deltas[loser] = -pips[loser]
         
         return TerminalState(deltas, self)
+    
+    def visible_hands(self, seat):
+        ret = [None for _ in self.hands]
+        ret[seat] = self.hands[seat]
+        return ret
 
     def legal_actions(self):
         return {UpAction, DownAction}
@@ -355,35 +360,32 @@ class Game():
         Incorporates RoundState information into the game log and player messages.
         '''
         if round_state.street == 0 and round_state.turn_number == 0:
-            self.log.append('{} posts the ante of {}'.format(players[0].name, ANTE))
-            self.log.append('{} posts the ante of {}'.format(players[1].name, ANTE))
-            self.log.append('{} dealt {}'.format(players[0].name, PCARDS(round_state.hands[0])))
-            self.log.append('{} dealt {}'.format(players[1].name, PCARDS(round_state.hands[1])))
-            players[0].messages.append(message('info', info={
-                    'seat': 0,
-                    'hands': [round_state.hands[0], None],
-                    'new_game': True,
-            }))
-            players[1].messages.append(message('info', info={
-                    'seat': 1,
-                    'hands': [None, round_state.hands[1]],
-                    'new_game': True,
-            }))
+            for seat, player in enumerate(players):
+                self.log.append(f'{player.name} posts the ante of {ANTE}')
+            for seat, player in enumerate(players):
+                self.log.append(f'{player.name} dealt {PCARDS(round_state.hands[seat])}')
+                player.messages.append(message('info', info={
+                        'seat': seat,
+                        'hands': round_state.visible_hands(seat),
+                        'new_game': True,
+                }))
         elif round_state.street > 0 and round_state.turn_number == 1:
             board = round_state.deck.peek(round_state.street)
-            self.log.append(STREET_NAMES[round_state.street - 3] + ' ' + PCARDS(board) +
-                            PVALUE(players[0].name, STARTING_STACK-round_state.stacks[0]) +
-                            PVALUE(players[1].name, STARTING_STACK-round_state.stacks[1]))
-            players[0].messages.append(messages('info', info = {
-                'seat': 0,
-                'hands': [round_state.hands[0], None],
-                'board': board,
-            }))
-            players[1].messages.append(messages('info', info = {
-                'seat': 1,
-                'hands': [None, round_state.hands[1]],
-                'board': board,
-            }))
+            self.log.append(
+                STREET_NAMES[round_state.street - 3]
+                + ' '
+                + PCARDS(board)
+                + ''.join(
+                    PVALUE(player.name, STARTING_STACK-round_state.stacks[seat])
+                    for seat, player in enumerate(players)
+                )
+            )
+            for seat, player in enumerate(players):
+                player.messages.append(messages('info', info = {
+                    'seat': seat,
+                    'hands': [round_state.visible_hands(seat), None],
+                    'board': board,
+                }))
 
     def log_action(self, players, seat, action):
         '''
@@ -396,16 +398,12 @@ class Game():
             phrasing = ' down'
             code = 'D'
         self.log.append(players[seat].name + phrasing)
-        players[0].messages.append(message(
-            'action',
-            action = {'verb': code},
-            player = seat,
-        ))
-        players[1].messages.append(message(
-            'action',
-            action = {'verb': code},
-            player = seat,
-        ))
+        for player in players:
+            player.messages.append(message(
+                'action',
+                action = {'verb': code},
+                player = seat,
+            ))
 
     def log_terminal_state(self, players, round_state):
         '''
@@ -413,26 +411,18 @@ class Game():
         '''
         previous_state = round_state.previous_state
         if round_state.previous_state.pips[0] == round_state.previous_state.pips[1]:
-            self.log.append('{} shows {}'.format(players[0].name, PCARDS(previous_state.hands[0])))
-            self.log.append('{} shows {}'.format(players[1].name, PCARDS(previous_state.hands[1])))
-            players[0].messages.append(message('info', info = {
-                'seat': 0,
-                'hands': previous_state.hands,
-            }))
-            players[1].messages.append(message('info', info = {
-                'seat': 1,
-                'hands': previous_state.hands,
-            }))
-        self.log.append('{} awarded {}'.format(players[0].name, round_state.deltas[0]))
-        self.log.append('{} awarded {}'.format(players[1].name, round_state.deltas[1]))
-        players[0].messages.append(message(
-            'payoff',
-            payoff = round_state.deltas[0],
-        ))
-        players[1].messages.append(message(
-            'payoff',
-            payoff = round_state.deltas[1],
-        ))
+            for seat, player in enumerate(players):
+                self.log.append(f'{player.name} shows {PCARDS(previous_state.hands[seat])}')
+                player.messages.append(message('info', info = {
+                    'seat': seat,
+                    'hands': previous_state.hands,
+                }))
+        for seat, player in enumerate(players):
+            self.log.append(f'{player.name} awarded {round_state.deltas[seat]:+d}')
+            player.messages.append(message(
+                'payoff',
+                payoff = round_state.deltas[seat],
+            ))
 
     def run_round(self, players):
         deck = KuhnDeck()

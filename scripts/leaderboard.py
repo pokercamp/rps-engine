@@ -6,7 +6,7 @@ import json
 import os
 import sys
 
-CLUSTER_MAX_SIGMA = 0.7
+CLUSTER_MAX_SIGMA = 0.8
 
 @dataclass
 class Player:
