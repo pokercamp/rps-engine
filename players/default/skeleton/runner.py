@@ -46,7 +46,6 @@ class Runner():
         game_state = GameState(0, 0., 1)
         round_state = None
         seat = 0
-        new_round_ready = True
         for packet in self.receive():
             # okay to accept a single json object
             if packet[0] == '{':
