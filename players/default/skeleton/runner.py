@@ -71,16 +71,27 @@ class Runner():
                             new_game = 'new_game' in info and info['new_game']
                             
                             if 'new_game' in info and info['new_game']:
-                                round_state = None # this will become previous_state
-                            round_state = RoundState(
-                                0,
-                                0,
-                                info['pips'],
-                                info['stacks'],
-                                info['hands'],
-                                None,
-                                None if new_game else round_state,
-                            )
+                                round_state = RoundState(
+                                    turn = 0,
+                                    street = 0,
+                                    pips = info['pips'],
+                                    stacks = info['stacks'],
+                                    hands = info['hands'],
+                                    deck = None,
+                                    action_history = [],
+                                    previous_state = None,
+                                )
+                            else:
+                                round_state = RoundState(
+                                    turn = round_state.turn if isinstance(round_state, RoundState) else round_state.previous_state.turn,
+                                    street = round_state.street if isinstance(round_state, RoundState) else round_state.previous_state.street,
+                                    pips = info['pips'],
+                                    stacks = info['stacks'],
+                                    hands = info['hands'],
+                                    deck = None,
+                                    action_history = round_state.street if isinstance(round_state, RoundState) else round_state.previous_state.action_history,
+                                    previous_state = round_state,
+                                )
                             
                             if new_game:
                                 self.pokerbot.handle_new_round(game_state, round_state, seat)

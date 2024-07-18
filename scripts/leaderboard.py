@@ -1,3 +1,4 @@
+import argparse
 from sortedcontainers import SortedList
 from dataclasses import dataclass, field
 import math
@@ -98,6 +99,7 @@ def create_groups(players):
             below_group.players.add(player)
             below_group.high = player.mean
         else:
+            print(groups)
             # Merge with the above group
             above_group.players.add(player)
             above_group.low = player.mean
@@ -157,18 +159,23 @@ def read_scores(filename):
 
     return sorted(players, key=lambda x: x.mean)
 
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python script.py <scores_file>")
-        sys.exit(1)
+def main():
+    parser = argparse.ArgumentParser(description="Generate a leaderboard JSON from scores.")
+    parser.add_argument("scores_file", help="Path to the input scores file")
+    parser.add_argument("-o", "--output", default="leaderboard.json",
+                        help="Path to the output JSON file (default: leaderboard.json)")
 
-    scores_file = sys.argv[1]
-    players = read_scores(scores_file)
+    args = parser.parse_args()
+
+    players = read_scores(args.scores_file)
     groups = create_groups(players)
     print_groups(groups)
     
     leaderboard = create_json(groups)
-    json_file = os.path.join(os.path.dirname(scores_file), "leaderboard.json")
-    with open(json_file, 'w') as f:
+    
+    with open(args.output, 'w') as f:
         json.dump(leaderboard, f, indent=2)
-    print(f"Leaderboard JSON written to {json_file}")
+    print(f"Leaderboard JSON written to {args.output}")
+
+if __name__ == "__main__":
+    main()

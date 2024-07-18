@@ -9,9 +9,8 @@ from skeleton.runner import parse_args, run_bot
 
 import json
 import os
+from pathlib import Path
 import random
-
-RAISE = ANTE + BET_SIZE
 
 class Player(Bot):
     '''
@@ -28,7 +27,9 @@ class Player(Bot):
         Returns:
         Nothing.
         '''
-        self.strategy = json.load(open(os.path.expanduser('~/strategy.json')))
+        with (Path(__file__).parent / 'strategy.json').open('r') as f:
+            self.strategy = json.load(f)
+            print(f'Loaded strategy: {self.strategy}')
 
     def handle_new_round(self, game_state, round_state, active):
         '''
@@ -101,35 +102,48 @@ class Player(Bot):
             my_hand = round_state.hands[seat]
             
             if round_state.hands[seat] is None:
-                print(f'WARN Bad round_state: hands {round_state.hands}')
+                print(f'WARN Bad round_state: seat {seat}, hands {round_state.hands}')
             
             up_prob = 0.0
+            
+            # print(round_state)
             
             match round_state.turn:
                 case 0:
                     match my_hand:
                         case 0:
+                            # print("Q_")
                             up_prob = self.strategy["Q_"]
                         case 1:
+                            # print("K_")
                             up_prob = self.strategy["K_"]
                         case 2:
+                            # print("A_")
                             up_prob = self.strategy["A_"]
                         case _:
                             print(f'WARN Bad round_state: unknown card {my_hand}')
                             return DownAction()
                 case 1:
-                    match my_hand, round_state.pips[1-seat]:
-                        case 0, ANTE:
+                    # print(my_hand)
+                    # print(round_state.action_history[0])
+                    match my_hand, round_state.action_history[0]:
+                        case 0, DownAction():
+                            # print("_QD")
                             up_prob = self.strategy["_QD"]
-                        case 1, ANTE:
+                        case 1, DownAction():
+                            # print("_KD")
                             up_prob = self.strategy["_KD"]
-                        case 2, ANTE:
+                        case 2, DownAction():
+                            # print("_AD")
                             up_prob = self.strategy["_AD"]
-                        case 0, RAISE:
+                        case 0, UpAction():
+                            # print("_QU")
                             up_prob = self.strategy["_QU"]
-                        case 1, RAISE:
+                        case 1, UpAction():
+                            # print("_KU")
                             up_prob = self.strategy["_KU"]
-                        case 2, RAISE:
+                        case 2, UpAction():
+                            # print("_AU")
                             up_prob = self.strategy["_AU"]
                         case _:
                             print(f'WARN Bad round_state for second turn: {round_state}')
@@ -137,19 +151,24 @@ class Player(Bot):
                 case 2:
                     match my_hand:
                         case 0:
+                            # print("Q_DU")
                             up_prob = self.strategy["Q_DU"]
                         case 1:
+                            # print("K_DU")
                             up_prob = self.strategy["K_DU"]
                         case 2:
+                            # print("A_DU")
                             up_prob = self.strategy["A_DU"]
                         case _:
-                            print(f'WARN Bad round_state: unknown card {my_hand}')
+                            print(f'WARN Bad round_state: unknown card {round_state.turn}')
                             return DownAction()
+                case _:
+                    print(f'WARN Bad round_state: unexpected turn {my_hand}')
+                    return DownAction()
             
-            print(round_state)
-            print(up_prob)
-            action = UpAction() if random.random() < up_prob else DownAction()
-            print(action)
+            # print(up_prob)
+            action = UpAction() if (random.random() < up_prob) else DownAction()
+            # print(action)
             return action
             
         else:

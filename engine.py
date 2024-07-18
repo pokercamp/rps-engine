@@ -22,6 +22,8 @@ from config import *
 
 import random
 
+random.seed(68127)
+
 class KuhnDeck:
     def __init__(self):
         self.cards = [0, 1, 2]
@@ -210,9 +212,11 @@ class Player():
                     server_socket.settimeout(CONNECT_TIMEOUT)
                     server_socket.listen()
                     port = server_socket.getsockname()[1]
-                    proc = subprocess.Popen(self.commands['run'] + [str(port)],
-                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                            cwd=self.path)
+                    proc = subprocess.Popen(
+                        self.commands['run'] + [str(port)],
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        cwd=self.path,
+                    )
                     self.bot_subprocess = proc
                     # function for bot listening
                     def enqueue_output(out, queue):
@@ -347,8 +351,8 @@ class Game():
     Manages logging and the high-level game procedure.
     '''
 
-    def __init__(self, p1, p2, output_path):
-        global PLAYER_1_NAME, PLAYER_1_PATH, PLAYER_2_NAME, LOGS_PATH, PLAYER_2_PATH
+    def __init__(self, p1, p2, output_path, n_rounds):
+        global PLAYER_1_NAME, PLAYER_1_PATH, PLAYER_2_NAME, LOGS_PATH, PLAYER_2_PATH, NUM_ROUNDS
         if p1 is not None:
             PLAYER_1_NAME = p1[0]
             PLAYER_1_PATH = p1[1]
@@ -357,6 +361,8 @@ class Game():
             PLAYER_2_PATH = p2[1]
         if output_path is not None:
             LOGS_PATH = output_path
+        if n_rounds is not None:
+            NUM_ROUNDS = int(n_rounds)
         
         self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
 
@@ -487,14 +493,15 @@ class Game():
                 log_file.write('\n'.join(players[active].response_log))
         
         with open(f'{LOGS_PATH}/{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}.txt', 'w') as score_file:
-            score_file.write('\n'.join([f'{p.name},{p.bankroll}' for p in players]))
+            score_file.write('\n'.join([f'{p.name},{p.bankroll*100.0/NUM_ROUNDS}' for p in players]))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Game engine with optional player arguments")
     parser.add_argument('-p1', nargs=2, metavar=('NAME', 'FILE'), help='Name and executable for player 1')
     parser.add_argument('-p2', nargs=2, metavar=('NAME', 'FILE'), help='Name and executable for player 2')
     parser.add_argument("-o", "--output", required=True, default="logs", help="Output directory for game results")
+    parser.add_argument("-n", "--n_rounds", default=1000, help="Number of rounds to run per matchup")
 
     args = parser.parse_args()
     
-    Game(args.p1, args.p2, args.output).run()
+    Game(args.p1, args.p2, args.output, args.n_rounds).run()

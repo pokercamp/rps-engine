@@ -13,7 +13,7 @@ ANTE = 1
 BET_SIZE = 1
 
 
-class RoundState(namedtuple('_RoundState', ['turn', 'street', 'pips', 'stacks', 'hands', 'deck', 'previous_state'])):
+class RoundState(namedtuple('_RoundState', ['turn', 'street', 'pips', 'stacks', 'hands', 'deck', 'action_history', 'previous_state'])):
     def showdown(self):
         hands = self.hands
         pips = self.pips
@@ -46,7 +46,7 @@ class RoundState(namedtuple('_RoundState', ['turn', 'street', 'pips', 'stacks', 
         if isinstance(action, DownAction):
             if self.turn == 0:
                 # First player checks, continue to second player
-                return RoundState(self.turn + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self)
+                return RoundState(self.turn + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self.action_history + [DownAction()], self)
             elif self.turn == 1:
                 if self.pips[0] == self.pips[1]:
                     # Both players checked, go to showdown
@@ -66,11 +66,29 @@ class RoundState(namedtuple('_RoundState', ['turn', 'street', 'pips', 'stacks', 
                 # This is a bet
                 new_pips[active] += BET_SIZE
                 new_stacks[active] -= BET_SIZE
-                return RoundState(self.turn + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self)
+                return RoundState(
+                    turn = self.turn + 1,
+                    street = self.street,
+                    pips = new_pips,
+                    stacks = new_stacks,
+                    hands = self.hands,
+                    deck = self.deck,
+                    action_history = self.action_history + [UpAction()],
+                    previous_state = self,
+                )
             else:
                 # This is a call
                 new_pips[active] = new_pips[inactive]
                 new_stacks[active] -= (new_pips[active] - self.pips[active])
                 # Always go to showdown after a call
-                return RoundState(self.turn + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self).showdown()
+                return RoundState(
+                    turn = self.turn + 1,
+                    street = self.street,
+                    pips = new_pips,
+                    stacks = new_stacks,
+                    hands = self.hands,
+                    deck = self.deck,
+                    action_history = self.action_history + [UpAction()],
+                    previous_state = self,
+                ).showdown()
                 

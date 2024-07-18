@@ -6,13 +6,16 @@ from itertools import product
 import argparse
 import os
 
-def run_games(players_csv, output_dir):
+def run_games(players_csv, output_dir, n_rounds):
     # Read player names and paths from CSV
     with open(players_csv, 'r') as f:
         reader = csv.reader(f)
         players_with_copies = list(reader)
     players = [
-        (f'{name}-{(i+1):02d}', path) for name, path, copies in players_with_copies for i in range(int(copies))]
+        (name + (f'-{(i+1):02d}' if (int(copies) > 1) else ''), path) for name, path, copies in players_with_copies for i in range(int(copies))]
+    
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    engine_path = os.path.join(os.path.dirname(current_dir), 'engine.py')
     
     # Activate virtual environment and run games for all pairs of players
     for p1, p2 in product(players, repeat=2):
@@ -20,7 +23,7 @@ def run_games(players_csv, output_dir):
         p2_name, p2_path = p2
         if p1_name == p2_name and p1_path == p2_path:
             continue
-        cmd = f"python engine.py -p1 {p1_name} {p1_path} -p2 {p2_name} {p2_path} -o {output_dir}"
+        cmd = f"python {engine_path} -p1 {p1_name} {p1_path} -p2 {p2_name} {p2_path} -o {output_dir} -n {n_rounds}"
         subprocess.run(cmd, shell=True, executable='/bin/bash')
 
 def analyze_scores(output_dir):
@@ -28,16 +31,19 @@ def analyze_scores(output_dir):
     player_scores = {}
 
     for file in score_files:
-        p1_name = os.path.basename(file).split('.')[1]
+        # p1_name = os.path.basename(file).split('.')[1]
         
         with open(file, 'r') as f:
             reader = csv.reader(f)
             for row in reader:
                 player_name, score = row
-                if player_name == p1_name:
-                    if p1_name not in player_scores:
-                        player_scores[p1_name] = []
-                    player_scores[p1_name].append(float(score))
+                if player_name not in player_scores:
+                    player_scores[player_name] = []
+                player_scores[player_name].append(float(score))
+                # if player_name == p1_name:
+                #     if p1_name not in player_scores:
+                #         player_scores[p1_name] = []
+                #     player_scores[p1_name].append(float(score))
 
     # Calculate statistics and prepare results
     results = []
@@ -63,12 +69,13 @@ def main():
     parser = argparse.ArgumentParser(description="Run games and analyze scores.")
     parser.add_argument("players_csv", help="Path to the CSV file containing player names and paths")
     parser.add_argument("-o", "--output", required=True, help="Output directory for game results")
+    parser.add_argument("-n", "--n_rounds", default=1000, help="Number of rounds to run per matchup")
     args = parser.parse_args()
 
     # Ensure the output directory exists
     os.makedirs(args.output, exist_ok=True)
 
-    run_games(args.players_csv, args.output)
+    run_games(args.players_csv, args.output, args.n_rounds)
     analyze_scores(args.output)
 
 if __name__ == "__main__":

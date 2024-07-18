@@ -95,10 +95,10 @@ class Player(Bot):
         
         print(round_state)
         if round_state and round_state.hands:
-            my_hand = round_state.hands[0] or round_state.hands[1]
+            my_hand = round_state.hands[active]
             
-            if not my_hand:
-                print(f'WARN Bad round_state: hands {round_state.hands}')
+            if my_hand is None:
+                print(f'WARN Bad round_state: active {active}, hands {round_state.hands}')
             
             match my_hand:
                 case 0:
