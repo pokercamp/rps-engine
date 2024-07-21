@@ -6,6 +6,14 @@ from itertools import product
 import argparse
 import os
 
+def get_newest_file_mtime(directory):
+    return max(
+        (os.path.getmtime(os.path.join(root, file))
+         for root, _, files in os.walk(directory)
+         for file in files),
+        default=0
+    )
+
 def run_games(players_csv, output_dir, n_rounds):
     # Read player names and paths from CSV
     with open(players_csv, 'r') as f:
@@ -17,12 +25,25 @@ def run_games(players_csv, output_dir, n_rounds):
     current_dir = os.path.dirname(os.path.abspath(__file__))
     engine_path = os.path.join(os.path.dirname(current_dir), 'engine.py')
     
-    # Activate virtual environment and run games for all pairs of players
+    # Run games for all pairs of players
     for p1, p2 in product(players, repeat=2):
         p1_name, p1_path = p1
         p2_name, p2_path = p2
         if p1_name == p2_name and p1_path == p2_path:
             continue
+        
+        output_file = os.path.join(output_dir, f"scores.{p1_name}.{p2_name}.txt")
+        
+        # Check if output file exists and is newer than player directories
+        if os.path.exists(output_file):
+            output_mtime = os.path.getmtime(output_file)
+            p1_newest = get_newest_file_mtime(p1_path)
+            p2_newest = get_newest_file_mtime(p2_path)
+            
+            if output_mtime > p1_newest and output_mtime > p2_newest:
+                print(f"Skipping {p1_name} vs {p2_name}: Matchup file is up to date.")
+                continue
+        
         cmd = f"python {engine_path} -p1 {p1_name} {p1_path} -p2 {p2_name} {p2_path} -o {output_dir} -n {n_rounds}"
         subprocess.run(cmd, shell=True, executable='/bin/bash')
 
