@@ -18,7 +18,7 @@ import sys
 import os
 
 sys.path.append(os.getcwd())
-from config import *
+from .config import *
 
 import random
 
@@ -37,8 +37,22 @@ class KuhnDeck:
         self.index += 1
         return card
 
-UpAction = namedtuple('UpAction', [])
-DownAction = namedtuple('DownAction', [])
+class DownAction(namedtuple('DownAction', [])):
+    def __hash__(self):
+        return hash('DownAction')
+    def __eq__(self, other):
+        return isinstance(other, DownAction)
+    def __repr__(self):
+        return 'Down'
+    
+class UpAction(namedtuple('UpAction', [])):
+    def __hash__(self):
+        return hash('UpAction')
+    def __eq__(self, other):
+        return isinstance(other, UpAction)
+    def __repr__(self):
+        return 'Up'
+    
 TerminalState = namedtuple('TerminalState', ['deltas', 'previous_state'])
 
 STREET_NAMES = []
@@ -85,7 +99,15 @@ def message(type, **kwargs):
     result.update(kwargs)
     return result
 
-class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'stacks', 'hands', 'deck', 'previous_state'])):
+class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'stacks', 'hands', 'deck', 'action_history', 'previous_state'])):
+    @staticmethod
+    def new():
+        deck = KuhnDeck()
+        hands = [deck.deal(), deck.deal()]
+        pips = [ANTE, ANTE]
+        stacks = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
+        return RoundState(0, 0, pips, stacks, hands, deck, [], None)
+    
     def showdown(self):
         hands = self.hands
         pips = self.pips
@@ -120,18 +142,24 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         if isinstance(action, DownAction):
             if self.turn_number == 0:
                 # First player checks, continue to second player
-                return RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self)
+                return RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self.action_history + [action], self)
             elif self.turn_number == 1:
                 if self.pips[0] == self.pips[1]:
                     # Both players checked, go to showdown
-                    return self.showdown()
+                    return RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self.action_history + [action], self).proceed_street()
                 else:
                     # Second player folds after a bet
-                    return TerminalState([self.pips[1], -self.pips[1]], self)
+                    return TerminalState(
+                        [self.pips[1], -self.pips[1]],
+                        RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self.action_history + [action], self),
+                    )
             else:
                 # This is check-bet-fold
                 assert(self.turn_number == 2)
-                return TerminalState([-self.pips[0], self.pips[0]], self)
+                return TerminalState(
+                    [-self.pips[0], self.pips[0]],
+                    RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self.action_history + [action], self),
+                )
         
         elif isinstance(action, UpAction):
             new_pips = list(self.pips)
@@ -140,13 +168,13 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
                 # This is a bet
                 new_pips[active] += BET_SIZE
                 new_stacks[active] -= BET_SIZE
-                return RoundState(self.turn_number + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self)
+                return RoundState(self.turn_number + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self.action_history + [action], self)
             else:
                 # This is a call
                 new_pips[active] = new_pips[inactive]
                 new_stacks[active] -= (new_pips[active] - self.pips[active])
                 # Always go to showdown after a call
-                return RoundState(self.turn_number + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self).showdown()
+                return RoundState(self.turn_number + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self.action_history + [action], self).proceed_street()
 
 class Player():
     '''
@@ -436,11 +464,7 @@ class Match():
             ))
 
     def run_round(self, players):
-        deck = KuhnDeck()
-        hands = [deck.deal(), deck.deal()]
-        pips = [ANTE, ANTE]
-        stacks = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
-        round_state = RoundState(0, 0, pips, stacks, hands, deck, None)
+        round_state = RoundState.new()
         while not isinstance(round_state, TerminalState):
             self.send_round_state(players, round_state)
             active = round_state.turn_number % 2
