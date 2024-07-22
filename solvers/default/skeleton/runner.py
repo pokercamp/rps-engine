@@ -5,7 +5,7 @@ import argparse
 import json
 import random
 from .base_solver import BaseSolver
-from .engine import RoundState, TerminalState, UpAction
+from .engine import RoundState, TerminalState
 
 def parse_args():
     parser = argparse.ArgumentParser(prog='python3 solver.py')
@@ -67,5 +67,5 @@ def run_solver(solver, args):
         
         solver.handle_iteration_over(iteration)
     
-    print(f'Final probabilities:\n{"\n".join(sorted([f"{infoset: <22}: {value[UpAction()]}" for infoset, value in solver.get_final_strategy_probabilities().items()]))}')
+    print(f'Final probabilities:\n{"\n".join(sorted([f"{infoset: <22}: {value}" for infoset, value in solver.get_final_strategy_probabilities().items()]))}')
     
