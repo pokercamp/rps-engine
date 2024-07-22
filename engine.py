@@ -327,7 +327,7 @@ class Player():
                             print(f'WARN Message missing required field "{e}": {response}')
                             continue
                 else:
-                    action = DECODE[clause[0]]
+                    print(f'WARN Bad message format (expected json or list of json): {response}')
                 
                 if action in legal_actions:
                     return action()
@@ -346,7 +346,7 @@ class Player():
                 game_log.append(self.name + ' response misformatted: ' + str(clause))
         return DownAction() if DownAction in legal_actions else UpAction()
 
-class Game():
+class Match():
     '''
     Manages logging and the high-level game procedure.
     '''
@@ -366,7 +366,7 @@ class Game():
         
         self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
 
-    def log_round_state(self, players, round_state):
+    def send_round_state(self, players, round_state):
         '''
         Incorporates RoundState information into the game log and player messages.
         '''
@@ -398,7 +398,7 @@ class Game():
                     'board': board,
                 }))
 
-    def log_action(self, players, seat, action):
+    def send_action(self, players, seat, action):
         '''
         Incorporates action information into the game log and player messages.
         '''
@@ -416,7 +416,7 @@ class Game():
                 seat = seat,
             ))
 
-    def log_terminal_state(self, players, round_state):
+    def send_terminal_state(self, players, round_state):
         '''
         Incorporates TerminalState information into the game log and player messages.
         '''
@@ -442,16 +442,16 @@ class Game():
         stacks = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
         round_state = RoundState(0, 0, pips, stacks, hands, deck, None)
         while not isinstance(round_state, TerminalState):
-            self.log_round_state(players, round_state)
+            self.send_round_state(players, round_state)
             active = round_state.turn_number % 2
             player = players[active]
             action = player.query(
                 round_state,
                 self.log,
             )
-            self.log_action(players, active, action)
+            self.send_action(players, active, action)
             round_state = round_state.proceed(action)
-        self.log_terminal_state(players, round_state)
+        self.send_terminal_state(players, round_state)
         for player, delta in zip(players, round_state.deltas):
             player.bankroll += delta
 
