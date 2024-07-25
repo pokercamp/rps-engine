@@ -93,5 +93,6 @@ class Solver(BaseSolver):
         '''
         return {infoset : self.get_training_strategy_probabilities(infoset, [None]) for infoset in self.regrets.keys()}
 
+# usage: python3 solver.py --iter ITERATIONS
 if __name__ == '__main__':
     run_solver(Solver(), parse_args())
