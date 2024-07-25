@@ -125,6 +125,9 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         ret = [None for _ in self.hands]
         ret[seat] = self.hands[seat]
         return ret
+    
+    def public(self):
+        return {}
 
     def legal_actions(self):
         return {UpAction, DownAction}

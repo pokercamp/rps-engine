@@ -1,5 +1,5 @@
 '''
-Example solver.
+Example solver. Implements a kind of crude Counterfactual Regret Minimization.
 '''
 from skeleton.base_solver import BaseSolver
 from skeleton.engine import RoundState
@@ -13,27 +13,32 @@ class Solver(BaseSolver):
         '''
         Called when iteration is about to begin.
         '''
+        
         pass
     
     def handle_iteration_over(self, _):
         '''
         Called when iteration is over.
         '''
+        
         pass
     
     def get_root(self, _):
         '''
         Returns the RoundState to start a new iteration at.
         '''
+        
         return RoundState.new()
     
-    def determine_infoset(self, active, hands, action_history):
+    def determine_infoset(self, *, active, public, hands, history):
         '''
         Called to ask for the canonical name of an infoset.
         
-        You might use this to coalesce multiple gamehistories into the same infoset.
+        You might use this to coalesce multiple gamehistories into the same
+        infoset.
         '''
-        return f'(P{active+1}){hands}{action_history}'
+        
+        return f'(P{active+1}){public}{hands}{history}'
     
     def sample_actions(self, infoset, legal_actions):
         '''
@@ -41,6 +46,7 @@ class Solver(BaseSolver):
         instances of each type (it might be 'or more' if you need to try
         different bet sizes...)
         '''
+        
         return [action() for action in legal_actions]
     
     def get_sampling_policy(self, infoset, *, iteration):
@@ -50,9 +56,16 @@ class Solver(BaseSolver):
         You can let this vary by iteration #, if you like.
         Currently supported: "expand_all", "sample"
         '''
+        
         return 'expand_all'
     
-    def handle_new_samples(self, infoset, sampling_policy, samples, use_ev):
+    def handle_new_samples(
+        self,
+        infoset,
+        sampling_policy,
+        samples,
+        use_infoset_ev,
+    ):
         '''
         Called on each new set of samples produced for a node.
         
@@ -60,9 +73,10 @@ class Solver(BaseSolver):
         (or whatever stored values they are derived from, like cumulative
         regrets)
         '''
+        
         if sampling_policy == 'expand_all':
             for action, sample_list in samples.items():
-                regret = sample_list[0] - use_ev
+                regret = sample_list[0] - use_infoset_ev
                 
                 if infoset not in self.regrets:
                     self.regrets[infoset] = {}
@@ -76,22 +90,33 @@ class Solver(BaseSolver):
     
     def get_training_strategy_probabilities(self, infoset, legal_actions):
         '''
-        Called to ask for the current probabilities that should be used in a training iteration.
+        Called to ask for the current probabilities that should be used in a
+        training iteration.
         '''
+        
         total_regret = sum(self.regrets[infoset].values()) if infoset in self.regrets else None
         if infoset not in self.regrets or total_regret == 0:
             n_legal_actions = len(legal_actions)
             return {action : 1 / n_legal_actions for action in legal_actions}
-        return {action : value / total_regret for action, value in self.regrets[infoset].items()}
+        return {
+            action : value / total_regret
+            for action, value
+            in self.regrets[infoset].items()
+        }
     
     def get_final_strategy_probabilities(self):
         '''
         Called to ask for the final probabilities to report.
         
-        This might be different from get_training_probabilites if you wanted to average over multiple
-        recent iterations.
+        This might be different from get_training_probabilites() if you wanted
+        to average over multiple recent iterations.
         '''
-        return {infoset : self.get_training_strategy_probabilities(infoset, [None]) for infoset in self.regrets.keys()}
+        
+        return {
+            infoset : self.get_training_strategy_probabilities(infoset, [None])
+            for infoset
+            in self.regrets.keys()
+        }
 
 # usage: python3 solver.py --iter ITERATIONS
 if __name__ == '__main__':
