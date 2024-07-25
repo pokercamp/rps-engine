@@ -212,7 +212,7 @@ class Player():
             else:
                 print(self.name, 'commands.json missing command')
         except FileNotFoundError:
-            print(self.name, 'commands.json not found - check PLAYER_PATH')
+            print(self.name, f'commands.json not found - check PLAYER_PATH={self.path}')
         except json.decoder.JSONDecodeError:
             print(self.name, 'commands.json misformatted')
         if self.commands is not None and len(self.commands['build']) > 0:
@@ -531,4 +531,4 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     
-    Game(args.p1, args.p2, args.output, args.n_rounds).run()
+    Match(args.p1, args.p2, args.output, args.n_rounds).run()
