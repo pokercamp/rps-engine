@@ -18,7 +18,7 @@ import sys
 import os
 
 sys.path.append(os.getcwd())
-from .config import *
+from config import *
 
 import random
 
