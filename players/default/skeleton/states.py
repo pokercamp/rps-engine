@@ -15,20 +15,10 @@ BET_SIZE = 1
 
 class RoundState(namedtuple('_RoundState', ['turn', 'street', 'pips', 'stacks', 'hands', 'deck', 'action_history', 'previous_state'])):
     def showdown(self):
-        hands = self.hands
-        pips = self.pips
-        
-        if hands[0] is None or hands[1] is None:
-            return TerminalState([0, 0], self)  # This should not happen in normal gameplay
-        
-        winner = 0 if hands[0] > hands[1] else 1
-        loser = 1 - winner
-        
-        deltas = [0, 0]
-        deltas[winner] = pips[loser]
-        deltas[loser] = -pips[loser]
-        
-        return TerminalState(deltas, self)
+        # don't compute this on the player side; at this point we don't even
+        # have enough info to do so, but in the next few messages we'll get an
+        # info message with the final hands, and after that a payoff message
+        return self
 
     def legal_actions(self):
         return {UpAction, DownAction}
