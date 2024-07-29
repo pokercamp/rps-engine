@@ -106,7 +106,16 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         hands = [deck.deal(), deck.deal()]
         pips = [ANTE, ANTE]
         stacks = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
-        return RoundState(0, 0, pips, stacks, hands, deck, [], None)
+        return RoundState(
+            turn_number=0,
+            street=0,
+            pips=pips,
+            stacks=stacks,
+            hands=hands,
+            deck=deck,
+            action_history=[],
+            previous_state=None,
+        )
     
     def showdown(self):
         hands = self.hands
@@ -145,23 +154,59 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         if isinstance(action, DownAction):
             if self.turn_number == 0:
                 # First player checks, continue to second player
-                return RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self.action_history + [action], self)
+                return RoundState(
+                    turn_number=self.turn_number + 1,
+                    street=self.street,
+                    pips=self.pips,
+                    stacks=self.stacks,
+                    hands=self.hands,
+                    deck=self.deck,
+                    action_history=self.action_history + [action],
+                    previous_state=self,
+                )
             elif self.turn_number == 1:
                 if self.pips[0] == self.pips[1]:
                     # Both players checked, go to showdown
-                    return RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self.action_history + [action], self).proceed_street()
+                    return RoundState(
+                        turn_number=self.turn_number + 1,
+                        street=self.street,
+                        pips=self.pips,
+                        stacks=self.stacks,
+                        hands=self.hands,
+                        deck=self.deck,
+                        action_history=self.action_history + [action],
+                        previous_state=self,
+                    ).proceed_street()
                 else:
                     # Second player folds after a bet
                     return TerminalState(
                         [self.pips[1], -self.pips[1]],
-                        RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self.action_history + [action], self),
+                        RoundState(
+                            turn_number=self.turn_number + 1,
+                            street=self.street,
+                            pips=self.pips,
+                            stacks=self.stacks,
+                            hands=self.hands,
+                            deck=self.deck,
+                            action_history=self.action_history + [action],
+                            previous_state=self,
+                        ),
                     )
             else:
                 # This is check-bet-fold
                 assert(self.turn_number == 2)
                 return TerminalState(
                     [-self.pips[0], self.pips[0]],
-                    RoundState(self.turn_number + 1, self.street, self.pips, self.stacks, self.hands, self.deck, self.action_history + [action], self),
+                    RoundState(
+                        turn_number=self.turn_number + 1,
+                        street=self.street,
+                        pips=self.pips,
+                        stacks=self.stacks,
+                        hands=self.hands,
+                        deck=self.deck,
+                        action_history=self.action_history + [action],
+                        previous_state=self,
+                    ),
                 )
         
         elif isinstance(action, UpAction):
@@ -171,13 +216,31 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
                 # This is a bet
                 new_pips[active] += BET_SIZE
                 new_stacks[active] -= BET_SIZE
-                return RoundState(self.turn_number + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self.action_history + [action], self)
+                return RoundState(
+                    turn_number=self.turn_number + 1,
+                    street=self.street,
+                    pips=new_pips,
+                    stacks=new_stacks,
+                    hands=self.hands,
+                    deck=self.deck,
+                    action_history=self.action_history + [action],
+                    previous_state=self,
+                )
             else:
                 # This is a call
                 new_pips[active] = new_pips[inactive]
                 new_stacks[active] -= (new_pips[active] - self.pips[active])
                 # Always go to showdown after a call
-                return RoundState(self.turn_number + 1, self.street, new_pips, new_stacks, self.hands, self.deck, self.action_history + [action], self).proceed_street()
+                return RoundState(
+                    turn_number=self.turn_number + 1,
+                    street=self.street,
+                    pips=new_pips,
+                    stacks=new_stacks,
+                    hands=self.hands,
+                    deck=self.deck,
+                    action_history=self.action_history + [action],
+                    previous_state=self,
+                ).proceed_street()
 
 class Player():
     '''
