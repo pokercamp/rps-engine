@@ -24,11 +24,59 @@ import random
 
 random.seed(68127)
 
+class Card(int):
+    def __new__(cls, value):
+        return super(Card, cls).__new__(cls, value)
+
+    @classmethod
+    def from_string(cls, s):
+        return cls(int(s))
+
 class KuhnDeck:
-    def __init__(self):
-        self.cards = [0, 1, 2]
-        random.shuffle(self.cards)
+    
+    duplicate_file = None
+    duplicate_file_iterator = None
+
+    @classmethod
+    def ensure_duplicate_file_iterator(cls, duplicate_file):
+        # for now, requires that the duplicate file never change
+        if cls.duplicate_file_iterator is None:
+            if duplicate_file:
+                if cls.duplicate_file is None:
+                    cls.duplicate_file = duplicate_file
+                else:
+                    assert cls.duplicate_file == duplicate_file
+                
+                try:
+                    cls.duplicate_file_iterator = open(duplicate_file, 'r')
+                except IOError:
+                    print(f"WARN: Could not open file {duplicate_file}. Using default shuffled deck.")
+                    cls.duplicate_file_iterator = None
+
+    @classmethod
+    def close_duplicate_file_iterator(cls):
+        if cls.duplicate_file_iterator:
+            cls.duplicate_file_iterator.close()
+            cls.duplicate_file_iterator = None
+    
+    def __init__(self, duplicate_file):
+        KuhnDeck.ensure_duplicate_file_iterator(duplicate_file)
+        
+        if duplicate_file and KuhnDeck.duplicate_file_iterator:
+            line = next(KuhnDeck.duplicate_file_iterator, None)
+            if line:
+                self.cards = [Card.from_string(card) for card in line.strip().split(',')]
+            else:
+                print(f"WARN: Ran out of entries (lines) in {duplicate_file}. Using default shuffled deck.")
+                self.use_default_deck()
+        else:
+            self.use_default_deck()
+        
         self.index = 0
+
+    def use_default_deck(self):
+        self.cards = [Card(0), Card(1), Card(2)]
+        random.shuffle(self.cards)
     
     def deal(self):
         if self.index >= len(self.cards):
@@ -57,8 +105,8 @@ TerminalState = namedtuple('TerminalState', ['deltas', 'previous_state'])
 
 STREET_NAMES = []
 DECODE = {'U': UpAction, 'D': DownAction}
-CCARDS = lambda card: '{}'.format(card)
-PCARDS = lambda card: '[{}]'.format(card)
+CCARDS = lambda card: f'{card}'
+PCARDS = lambda card: f'[{card}]'
 PVALUE = lambda name, value: f', {name} ({value:+d})'
 STATUS = lambda players: ''.join([PVALUE(p.name, p.bankroll) for p in players])
 
@@ -101,8 +149,8 @@ def message(type, **kwargs):
 
 class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'stacks', 'hands', 'deck', 'action_history', 'previous_state'])):
     @staticmethod
-    def new():
-        deck = KuhnDeck()
+    def new(duplicate_file):
+        deck = KuhnDeck(duplicate_file = duplicate_file)
         hands = [deck.deal(), deck.deal()]
         pips = [ANTE, ANTE]
         stacks = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
@@ -445,7 +493,9 @@ class Match():
     Manages logging and the high-level game procedure.
     '''
 
-    def __init__(self, p1, p2, output_path, n_rounds):
+    def __init__(self, *,
+        p1, p2, output_path, n_rounds, switch_seats, duplicate_file,
+    ):
         global PLAYER_1_NAME, PLAYER_1_PATH, PLAYER_2_NAME, LOGS_PATH, PLAYER_2_PATH, NUM_ROUNDS
         if p1 is not None:
             PLAYER_1_NAME = p1[0]
@@ -457,6 +507,8 @@ class Match():
             LOGS_PATH = output_path
         if n_rounds is not None:
             NUM_ROUNDS = int(n_rounds)
+        self.switch_seats = switch_seats
+        self.duplicate_file = duplicate_file
         
         self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
 
@@ -530,7 +582,7 @@ class Match():
             ))
 
     def run_round(self, players):
-        round_state = RoundState.new()
+        round_state = RoundState.new(duplicate_file = self.duplicate_file)
         while not isinstance(round_state, TerminalState):
             self.send_round_state(players, round_state)
             active = round_state.turn_number % 2
@@ -547,7 +599,7 @@ class Match():
 
     def run(self):
         '''
-        Runs one match of poker.
+        Runs one matchup.
         '''
         print('Starting the game engine...')
         MATCH_DIR = f'{LOGS_PATH}/{PLAYER_1_NAME}.{PLAYER_2_NAME}'
@@ -563,7 +615,8 @@ class Match():
             self.log.append('')
             self.log.append('Round #' + str(round_num) + STATUS(players))
             self.run_round(players)
-            players = players[::-1]
+            if self.switch_seats:
+                players = players[::-1]
         self.log.append('')
         self.log.append('Final' + STATUS(players))
         for i, player in enumerate(players):
@@ -589,9 +642,20 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Game engine with optional player arguments")
     parser.add_argument('-p1', nargs=2, metavar=('NAME', 'FILE'), help='Name and executable for player 1')
     parser.add_argument('-p2', nargs=2, metavar=('NAME', 'FILE'), help='Name and executable for player 2')
-    parser.add_argument("-o", "--output", required=True, default="logs", help="Output directory for game results")
-    parser.add_argument("-n", "--n_rounds", default=1000, help="Number of rounds to run per matchup")
+    parser.add_argument("-o", "--output", required=True, default="logs", metavar='PATH', help="Output directory for game results")
+    parser.add_argument("-n", "--n-rounds", default=1000, metavar='INT', help="Number of rounds to run per matchup")
+    parser.add_argument("--switch-seats", default=True, action=argparse.BooleanOptionalAction, help='Do players switch seats between rounds')
+    parser.add_argument("-d", "--duplicate", metavar='FILE', help='File to read decks from in duplicate mode')
 
     args = parser.parse_args()
     
-    Match(args.p1, args.p2, args.output, args.n_rounds).run()
+    Match(
+        p1 = args.p1,
+        p2 = args.p2,
+        output_path = args.output,
+        n_rounds = args.n_rounds,
+        switch_seats = args.switch_seats,
+        duplicate_file = args.duplicate,
+    ).run()
+    
+    KuhnDeck.close_duplicate_file_iterator()
