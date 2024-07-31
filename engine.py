@@ -16,6 +16,7 @@ import socket
 # import eval7
 import sys
 import os
+import hashlib
 
 sys.path.append(os.getcwd())
 from config import *
@@ -35,8 +36,15 @@ class Card(int):
 class KuhnDeck:
     
     duplicate_file = None
+    duplicate_id = ''
     duplicate_file_iterator = None
-
+    
+    @classmethod
+    def get_file_info_hash(cls, filename):
+        full_path = os.path.abspath(filename)
+        mtime = os.path.getmtime(full_path)
+        return hashlib.sha256(f"{full_path}|{mtime}".encode()).hexdigest()
+    
     @classmethod
     def ensure_duplicate_file_iterator(cls, duplicate_file):
         # for now, requires that the duplicate file never change
@@ -44,6 +52,7 @@ class KuhnDeck:
             if duplicate_file:
                 if cls.duplicate_file is None:
                     cls.duplicate_file = duplicate_file
+                    cls.duplicate_id = f'.D{cls.get_file_info_hash(duplicate_file)[:6]}'
                 else:
                     assert cls.duplicate_file == duplicate_file
                 
@@ -295,10 +304,11 @@ class Player():
     Handles subprocess and socket interactions with one player's pokerbot.
     '''
 
-    def __init__(self, name, path, output_dir):
+    def __init__(self, name, path, output_dir, *, capture):
         self.name = name
         self.path = path
         self.stdout_path = f'{output_dir}/{self.name}.stdout.txt'
+        self.capture = capture
         self.game_clock = STARTING_GAME_CLOCK
         self.bankroll = 0
         self.commands = None
@@ -328,9 +338,16 @@ class Player():
             print(self.name, 'commands.json misformatted')
         if self.commands is not None and len(self.commands['build']) > 0:
             try:
-                proc = subprocess.run(self.commands['build'],
-                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                      cwd=self.path, timeout=BUILD_TIMEOUT, check=False)
+                proc = subprocess.run(
+                    self.commands['build'],
+                    **({
+                        'stdout': subprocess.PIPE,
+                        'stderr': subprocess.STDOUT,
+                    } if self.capture else {}),
+                    cwd=self.path,
+                    timeout=BUILD_TIMEOUT,
+                    check=False,
+                )
                 self.bytes_queue.put(proc.stdout)
             except subprocess.TimeoutExpired as timeout_expired:
                 error_message = 'Timed out waiting for ' + self.name + ' to build'
@@ -356,7 +373,10 @@ class Player():
                     port = server_socket.getsockname()[1]
                     proc = subprocess.Popen(
                         self.commands['run'] + [str(port)],
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        **({
+                            'stdout': subprocess.PIPE,
+                            'stderr': subprocess.STDOUT
+                        } if self.capture else {}),
                         cwd=self.path,
                     )
                     self.bot_subprocess = proc
@@ -462,18 +482,24 @@ class Player():
                                         case 'D':
                                             action = DownAction
                                         case _:
-                                            print(f'WARN Bad action verb: {response}')
+                                            print(f'WARN Bad action verb from {self.name}: {response}')
                                 case _:
-                                    print(f"WARN Bad message type: {response}")
+                                    print(f"WARN Bad message type from {self.name}: {response}")
                         except KeyError as e:
-                            print(f'WARN Message missing required field "{e}": {response}')
+                            print(f'WARN Message from {self.name} missing required field "{e}": {response}')
                             continue
                 else:
-                    print(f'WARN Bad message format (expected json or list of json): {response}')
+                    if len(response) == 0:
+                        print(f'WARN Bad message from {self.name} (empty)')
+                    else:
+                        print(f'WARN Bad message format from {self.name} (expected json or list of json): {response}')
                 
                 if action in legal_actions:
                     return action()
-                game_log.append(self.name + ' attempted illegal ' + action.__name__)
+                elif action is None:
+                    game_log.append(self.name + ' did not respond')
+                else:
+                    game_log.append(self.name + ' attempted illegal ' + action.__name__)
             except socket.timeout:
                 error_message = self.name + ' ran out of time'
                 game_log.append(error_message)
@@ -481,11 +507,12 @@ class Player():
                 self.game_clock = 0.
             except OSError:
                 error_message = self.name + ' disconnected'
-                game_log.append(error_message)
+                if game_log:
+                    game_log.append(error_message)
                 print(error_message)
                 self.game_clock = 0.
             except (IndexError, KeyError, ValueError):
-                game_log.append(self.name + ' response misformatted: ' + str(clause))
+                game_log.append(f'Response from {self.name} misformatted: ' + str(clause))
         return DownAction() if DownAction in legal_actions else UpAction()
 
 class Match():
@@ -501,6 +528,7 @@ class Match():
         switch_seats=True,
         duplicate_file=None,
         secrets=None,
+        capture=True,
     ):
         global PLAYER_1_NAME, PLAYER_1_PATH, PLAYER_2_NAME, LOGS_PATH, PLAYER_2_PATH, NUM_ROUNDS
         if p1 is not None:
@@ -517,6 +545,7 @@ class Match():
         self.duplicate_file = duplicate_file
         self.secrets = None if secrets is None else secrets.strip().split(',')
         assert self.secrets is None or len(self.secrets) == 2
+        self.capture = capture
         
         self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
 
@@ -611,11 +640,12 @@ class Match():
         Runs one matchup.
         '''
         print('Starting the game engine...')
-        MATCH_DIR = f'{LOGS_PATH}/{PLAYER_1_NAME}.{PLAYER_2_NAME}'
+        KuhnDeck.ensure_duplicate_file_iterator(self.duplicate_file)
+        MATCH_DIR = f'{LOGS_PATH}/{PLAYER_1_NAME}.{PLAYER_2_NAME}{KuhnDeck.duplicate_id}'
         Path(MATCH_DIR).mkdir(parents=True, exist_ok=True)
         players = [
-            Player(PLAYER_1_NAME, PLAYER_1_PATH, MATCH_DIR, ),
-            Player(PLAYER_2_NAME, PLAYER_2_PATH, MATCH_DIR, ),
+            Player(PLAYER_1_NAME, PLAYER_1_PATH, MATCH_DIR, capture=self.capture, ),
+            Player(PLAYER_2_NAME, PLAYER_2_PATH, MATCH_DIR, capture=self.capture, ),
         ]
         for player in players:
             player.build()
@@ -644,7 +674,7 @@ class Match():
             with open(f'{MATCH_DIR}/{name}.msg.player.txt', 'w') as log_file:
                 log_file.write('\n'.join(players[active].response_log))
         
-        with open(f'{LOGS_PATH}/{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}.txt', 'w') as score_file:
+        with open(f'{LOGS_PATH}/{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}{KuhnDeck.duplicate_id}.txt', 'w') as score_file:
             score_file.write('\n'.join([f'{p.name},{p.bankroll*100.0/NUM_ROUNDS}' for p in players]))
 
 if __name__ == '__main__':
@@ -656,6 +686,7 @@ if __name__ == '__main__':
     parser.add_argument("--switch-seats", default=True, action=argparse.BooleanOptionalAction, help='Do players switch seats between rounds')
     parser.add_argument("-d", "--duplicate", metavar='FILE', help='File to read decks from in duplicate mode')
     parser.add_argument("--secrets", metavar=('STR,STR'), help='Secret info given to players at start of round')
+    parser.add_argument("--capture", default=True, action=argparse.BooleanOptionalAction, help='Capture player outputs and write them to log files')
 
 
     args = parser.parse_args()
@@ -668,6 +699,7 @@ if __name__ == '__main__':
         switch_seats = args.switch_seats,
         duplicate_file = args.duplicate,
         secrets = args.secrets,
+        capture = args.capture,
     ).run()
     
     KuhnDeck.done()
