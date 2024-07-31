@@ -54,7 +54,7 @@ class KuhnDeck:
                     cls.duplicate_file_iterator = None
 
     @classmethod
-    def close_duplicate_file_iterator(cls):
+    def done(cls):
         if cls.duplicate_file_iterator:
             cls.duplicate_file_iterator.close()
             cls.duplicate_file_iterator = None
@@ -494,7 +494,13 @@ class Match():
     '''
 
     def __init__(self, *,
-        p1, p2, output_path, n_rounds, switch_seats, duplicate_file,
+        p1,
+        p2,
+        output_path,
+        n_rounds,
+        switch_seats=True,
+        duplicate_file=None,
+        secrets=None,
     ):
         global PLAYER_1_NAME, PLAYER_1_PATH, PLAYER_2_NAME, LOGS_PATH, PLAYER_2_PATH, NUM_ROUNDS
         if p1 is not None:
@@ -509,6 +515,8 @@ class Match():
             NUM_ROUNDS = int(n_rounds)
         self.switch_seats = switch_seats
         self.duplicate_file = duplicate_file
+        self.secrets = None if secrets is None else secrets.strip().split(',')
+        assert self.secrets is None or len(self.secrets) == 2
         
         self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
 
@@ -524,6 +532,7 @@ class Match():
                 player.append(message('info', info={
                         'seat': seat,
                         'hands': round_state.visible_hands(seat),
+                        **({'secret': self.secrets[seat]} if self.secrets else {}),
                         'new_game': True,
                 }))
         elif round_state.street > 0 and round_state.turn_number == 1:
@@ -646,6 +655,8 @@ if __name__ == '__main__':
     parser.add_argument("-n", "--n-rounds", default=1000, metavar='INT', help="Number of rounds to run per matchup")
     parser.add_argument("--switch-seats", default=True, action=argparse.BooleanOptionalAction, help='Do players switch seats between rounds')
     parser.add_argument("-d", "--duplicate", metavar='FILE', help='File to read decks from in duplicate mode')
+    parser.add_argument("--secrets", metavar=('STR,STR'), help='Secret info given to players at start of round')
+
 
     args = parser.parse_args()
     
@@ -656,6 +667,7 @@ if __name__ == '__main__':
         n_rounds = args.n_rounds,
         switch_seats = args.switch_seats,
         duplicate_file = args.duplicate,
+        secrets = args.secrets,
     ).run()
     
-    KuhnDeck.close_duplicate_file_iterator()
+    KuhnDeck.done()
