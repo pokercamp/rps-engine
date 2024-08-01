@@ -27,14 +27,14 @@ random.seed(68127)
 
 class Card(int):
     def __new__(cls, value):
+        assert value == 2 or value == 3
         return super(Card, cls).__new__(cls, value)
 
     @classmethod
     def from_string(cls, s):
         return cls(int(s))
 
-class KuhnDeck:
-    
+class PSMRDeck:
     duplicate_file = None
     duplicate_id = ''
     duplicate_file_iterator = None
@@ -68,11 +68,11 @@ class KuhnDeck:
             cls.duplicate_file_iterator.close()
             cls.duplicate_file_iterator = None
     
-    def __init__(self, duplicate_file):
-        KuhnDeck.ensure_duplicate_file_iterator(duplicate_file)
+    def __init__(self, *, duplicate_file):
+        PSMRDeck.ensure_duplicate_file_iterator(duplicate_file)
         
-        if duplicate_file and KuhnDeck.duplicate_file_iterator:
-            line = next(KuhnDeck.duplicate_file_iterator, None)
+        if duplicate_file and PSMRDeck.duplicate_file_iterator:
+            line = next(PSMRDeck.duplicate_file_iterator, None)
             if line:
                 self.cards = [Card.from_string(card) for card in line.strip().split(',')]
             else:
@@ -84,8 +84,7 @@ class KuhnDeck:
         self.index = 0
 
     def use_default_deck(self):
-        self.cards = [Card(0), Card(1), Card(2)]
-        random.shuffle(self.cards)
+        self.cards = [Card(3), Card(3)]
     
     def deal(self):
         if self.index >= len(self.cards):
@@ -94,28 +93,37 @@ class KuhnDeck:
         self.index += 1
         return card
 
-class DownAction(namedtuple('DownAction', [])):
+class RockAction(namedtuple('RockAction', [])):
     def __hash__(self):
-        return hash('DownAction')
+        return hash('RockAction')
     def __eq__(self, other):
-        return isinstance(other, DownAction)
+        return isinstance(other, RockAction)
     def __repr__(self):
-        return 'Down'
-    
-class UpAction(namedtuple('UpAction', [])):
+        return 'Rock'
+
+class PaperAction(namedtuple('PaperAction', [])):
     def __hash__(self):
-        return hash('UpAction')
+        return hash('PaperAction')
     def __eq__(self, other):
-        return isinstance(other, UpAction)
+        return isinstance(other, PaperAction)
     def __repr__(self):
-        return 'Up'
+        return 'Paper'
+
+class ScissorsAction(namedtuple('ScissorsAction', [])):
+    def __hash__(self):
+        return hash('ScissorsAction')
+    def __eq__(self, other):
+        return isinstance(other, ScissorsAction)
+    def __repr__(self):
+        return 'Scissors'
     
 TerminalState = namedtuple('TerminalState', ['deltas', 'previous_state'])
 
 STREET_NAMES = []
-DECODE = {'U': UpAction, 'D': DownAction}
-CCARDS = lambda card: f'{card}'
-PCARDS = lambda card: f'[{card}]'
+
+DECODE = {'R': RockAction, 'P': PaperAction, 'S': ScissorsAction}
+CCARDS = lambda card: '{}'.format(card)
+PCARDS = lambda card: '[{}]'.format(card)
 PVALUE = lambda name, value: f', {name} ({value:+d})'
 STATUS = lambda players: ''.join([PVALUE(p.name, p.bankroll) for p in players])
 
@@ -159,7 +167,7 @@ def message(type, **kwargs):
 class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'stacks', 'hands', 'deck', 'action_history', 'previous_state'])):
     @staticmethod
     def new(duplicate_file):
-        deck = KuhnDeck(duplicate_file = duplicate_file)
+        deck = PSMRDeck(duplicate_file = duplicate_file)
         hands = [deck.deal(), deck.deal()]
         pips = [ANTE, ANTE]
         stacks = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
@@ -178,12 +186,25 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         hands = self.hands
         pips = self.pips
         
-        winner = 0 if hands[0] > hands[1] else 1
-        loser = 1 - winner
+        beats = [
+            (RockAction(), ScissorsAction()),
+            (ScissorsAction(), PaperAction()),
+            (PaperAction(), RockAction()),
+        ]
+        if (self.action_history[0], self.action_history[1]) in beats:
+            winner = 0
+            loser = 1
+        elif (self.action_history[1], self.action_history[0]) in beats:
+            winner = 1
+            loser = 0
+        else:
+            winner = None
+            loser = None
         
         deltas = [0, 0]
-        deltas[winner] = pips[loser]
-        deltas[loser] = -pips[loser]
+        if winner is not None:
+            deltas[winner] = pips[loser]
+            deltas[loser] = -pips[loser]
         
         return TerminalState(deltas, self)
     
@@ -196,109 +217,31 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         return {}
 
     def legal_actions(self):
-        return {UpAction, DownAction}
+        return {RockAction, PaperAction, ScissorsAction} if self.hands[self.turn_number] == 3 else {PaperAction, ScissorsAction}
 
     def raise_bounds(self):
-        return (BET_SIZE, BET_SIZE)  # Not used in Kuhn poker, but kept for compatibility
+        return (0, 0)  # Not used in RPMS, but kept for compatibility
 
     def proceed_street(self):
-        return self.showdown()  # Kuhn poker is single street
+        return self.showdown()  # RPMS is single street
 
     def proceed(self, action):
-        active = self.turn_number % 2
-        inactive = 1 - active
+        state = RoundState(
+            turn_number = self.turn_number + 1,
+            street = self.street,
+            pips = self.pips,
+            stacks = self.stacks,
+            hands = self.hands,
+            deck = self.deck,
+            action_history = self.action_history + [action],
+            previous_state = self,
+        )
         
-        if isinstance(action, DownAction):
-            if self.turn_number == 0:
-                # First player checks, continue to second player
-                return RoundState(
-                    turn_number=self.turn_number + 1,
-                    street=self.street,
-                    pips=self.pips,
-                    stacks=self.stacks,
-                    hands=self.hands,
-                    deck=self.deck,
-                    action_history=self.action_history + [action],
-                    previous_state=self,
-                )
-            elif self.turn_number == 1:
-                if self.pips[0] == self.pips[1]:
-                    # Both players checked, go to showdown
-                    return RoundState(
-                        turn_number=self.turn_number + 1,
-                        street=self.street,
-                        pips=self.pips,
-                        stacks=self.stacks,
-                        hands=self.hands,
-                        deck=self.deck,
-                        action_history=self.action_history + [action],
-                        previous_state=self,
-                    ).proceed_street()
-                else:
-                    # Second player folds after a bet
-                    return TerminalState(
-                        [self.pips[1], -self.pips[1]],
-                        RoundState(
-                            turn_number=self.turn_number + 1,
-                            street=self.street,
-                            pips=self.pips,
-                            stacks=self.stacks,
-                            hands=self.hands,
-                            deck=self.deck,
-                            action_history=self.action_history + [action],
-                            previous_state=self,
-                        ),
-                    )
-            else:
-                # This is check-bet-fold
-                assert(self.turn_number == 2)
-                return TerminalState(
-                    [-self.pips[0], self.pips[0]],
-                    RoundState(
-                        turn_number=self.turn_number + 1,
-                        street=self.street,
-                        pips=self.pips,
-                        stacks=self.stacks,
-                        hands=self.hands,
-                        deck=self.deck,
-                        action_history=self.action_history + [action],
-                        previous_state=self,
-                    ),
-                )
+        if self.turn_number == 1:
+            return state.proceed_street()
+        else:
+            return state
         
-        elif isinstance(action, UpAction):
-            new_pips = list(self.pips)
-            new_stacks = list(self.stacks)
-            if self.pips[0] == self.pips[1]:
-                # This is a bet
-                new_pips[active] += BET_SIZE
-                new_stacks[active] -= BET_SIZE
-                return RoundState(
-                    turn_number=self.turn_number + 1,
-                    street=self.street,
-                    pips=new_pips,
-                    stacks=new_stacks,
-                    hands=self.hands,
-                    deck=self.deck,
-                    action_history=self.action_history + [action],
-                    previous_state=self,
-                )
-            else:
-                # This is a call
-                new_pips[active] = new_pips[inactive]
-                new_stacks[active] -= (new_pips[active] - self.pips[active])
-                # Always go to showdown after a call
-                return RoundState(
-                    turn_number=self.turn_number + 1,
-                    street=self.street,
-                    pips=new_pips,
-                    stacks=new_stacks,
-                    hands=self.hands,
-                    deck=self.deck,
-                    action_history=self.action_history + [action],
-                    previous_state=self,
-                ).proceed_street()
-
 class Player():
     '''
     Handles subprocess and socket interactions with one player's pokerbot.
@@ -480,10 +423,12 @@ class Player():
                             match response['type']:
                                 case 'action':
                                     match response['action']['verb']:
-                                        case 'U':
-                                            action = UpAction
-                                        case 'D':
-                                            action = DownAction
+                                        case 'R':
+                                            action = RockAction
+                                        case 'P':
+                                            action = PaperAction
+                                        case 'S':
+                                            action = ScissorsAction
                                         case _:
                                             print(f'WARN Bad action verb from {self.name}: {response}')
                                 case _:
@@ -516,7 +461,7 @@ class Player():
                 self.game_clock = 0.
             except (IndexError, KeyError, ValueError):
                 game_log.append(f'Response from {self.name} misformatted: ' + str(clause))
-        return DownAction() if DownAction in legal_actions else UpAction()
+        return ScissorsAction()
 
 class Match():
     '''
@@ -551,6 +496,8 @@ class Match():
         self.capture = capture
         
         self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
+        
+        self.held_action_messages = []
 
     def send_round_state(self, players, round_state):
         '''
@@ -567,56 +514,36 @@ class Match():
                         **({'secret': self.secrets[seat]} if self.secrets else {}),
                         'new_game': True,
                 }))
-        elif round_state.street > 0 and round_state.turn_number == 1:
-            board = round_state.deck.peek(round_state.street)
-            self.log.append(
-                STREET_NAMES[round_state.street - 3]
-                + ' '
-                + PCARDS(board)
-                + ''.join(
-                    PVALUE(player.name, STARTING_STACK-round_state.stacks[seat])
-                    for seat, player in enumerate(players)
-                )
-            )
-            for seat, player in enumerate(players):
-                player.append(messages('info', info = {
-                    'seat': seat,
-                    'hands': [round_state.visible_hands(seat), None],
-                    'board': board,
-                }))
 
     def send_action(self, players, seat, action):
         '''
         Incorporates action information into the game log and player messages.
         '''
-        if isinstance(action, UpAction):
-            phrasing = ' up'
-            code = 'U'
-        else:  # isinstance(action, DownAction)
-            phrasing = ' down'
-            code = 'D'
+        if isinstance(action, RockAction):
+            phrasing = ' rock'
+            code = 'R'
+        elif isinstance(action, PaperAction):
+            phrasing = ' paper'
+            code = 'P'
+        else:  # isinstance(action, ScissorsAction)
+            phrasing = ' scissors'
+            code = 'S'
         self.log.append(players[seat].name + phrasing)
-        for player in players:
-            player.append(message(
-                'action',
-                action = {'verb': code},
-                seat = seat,
-            ))
+        self.held_action_messages.append(message(
+            'action',
+            action = {'verb': code},
+            seat = seat,
+        ))
 
     def send_terminal_state(self, players, round_state):
         '''
         Incorporates TerminalState information into the game log and player messages.
         '''
         previous_state = round_state.previous_state
-        if round_state.previous_state.pips[0] == round_state.previous_state.pips[1]:
-            for seat, player in enumerate(players):
-                self.log.append(f'{player.name} shows {PCARDS(previous_state.hands[seat])}')
-                player.append(message('info', info = {
-                    'seat': seat,
-                    'hands': previous_state.hands,
-                }))
         for seat, player in enumerate(players):
             self.log.append(f'{player.name} awarded {round_state.deltas[seat]:+d}')
+            for held_action_message in self.held_action_messages:
+                player.append(held_action_message)
             player.append(message(
                 'payoff',
                 payoff = round_state.deltas[seat],
@@ -625,6 +552,7 @@ class Match():
     def run_round(self, players):
         round_state = RoundState.new(duplicate_file = self.duplicate_file)
         while not isinstance(round_state, TerminalState):
+            # print(round_state)
             self.send_round_state(players, round_state)
             active = round_state.turn_number % 2
             player = players[active]
@@ -632,8 +560,10 @@ class Match():
                 round_state,
                 self.log,
             )
+            # print(action)
             self.send_action(players, active, action)
             round_state = round_state.proceed(action)
+        # print(round_state)
         self.send_terminal_state(players, round_state)
         for player, delta in zip(players, round_state.deltas):
             player.bankroll += delta
@@ -643,8 +573,8 @@ class Match():
         Runs one matchup.
         '''
         print('Starting the game engine...')
-        KuhnDeck.ensure_duplicate_file_iterator(self.duplicate_file)
-        MATCH_DIR = f'{LOGS_PATH}/{PLAYER_1_NAME}.{PLAYER_2_NAME}{KuhnDeck.duplicate_id}'
+        PSMRDeck.ensure_duplicate_file_iterator(self.duplicate_file)
+        MATCH_DIR = f'{LOGS_PATH}/{PLAYER_1_NAME}.{PLAYER_2_NAME}{PSMRDeck.duplicate_id}'
         Path(MATCH_DIR).mkdir(parents=True, exist_ok=True)
         players = [
             Player(PLAYER_1_NAME, PLAYER_1_PATH, MATCH_DIR, capture=self.capture, ),
@@ -677,7 +607,7 @@ class Match():
             with open(f'{MATCH_DIR}/{name}.msg.player.txt', 'w') as log_file:
                 log_file.write('\n'.join(players[active].response_log))
         
-        with open(f'{LOGS_PATH}/{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}{KuhnDeck.duplicate_id}.txt', 'w') as score_file:
+        with open(f'{LOGS_PATH}/{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}{PSMRDeck.duplicate_id}.txt', 'w') as score_file:
             score_file.write('\n'.join([f'{p.name},{p.bankroll*100.0/NUM_ROUNDS}' for p in players]))
 
 if __name__ == '__main__':
@@ -690,7 +620,6 @@ if __name__ == '__main__':
     parser.add_argument("-d", "--duplicate", metavar='FILE', help='File to read decks from in duplicate mode')
     parser.add_argument("--secrets", metavar=('STR,STR'), help='Secret info given to players at start of round')
     parser.add_argument("--capture", default=True, action=argparse.BooleanOptionalAction, help='Capture player outputs and write them to log files')
-
 
     args = parser.parse_args()
     
@@ -705,4 +634,4 @@ if __name__ == '__main__':
         capture = args.capture,
     ).run()
     
-    KuhnDeck.done()
+    PSMRDeck.done()

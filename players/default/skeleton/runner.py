@@ -4,9 +4,9 @@ The infrastructure for interacting with the engine.
 import argparse
 import json
 import socket
-from .actions import UpAction, DownAction
+from .actions import RockAction, PaperAction, ScissorsAction
 from .states import GameState, TerminalState, RoundState
-from .states import STARTING_STACK, ANTE, BET_SIZE
+from .states import STARTING_STACK, ANTE
 from .bot import Bot
 
 class Runner():
@@ -32,9 +32,16 @@ class Runner():
         '''
         Encodes an action and sends it to the engine.
         '''
+        match action:
+            case RockAction():
+                verb = 'R'
+            case PaperAction():
+                verb = 'P'
+            case ScissorsAction():
+                verb = 'S'
         self.socketfile.write(json.dumps({
             'type': 'action',
-            'action': {'verb': 'U' if isinstance(action, UpAction) else 'D'},
+            'action': {'verb': verb},
             'player': seat,
         }) + '\n')
         self.socketfile.flush()
@@ -72,7 +79,7 @@ class Runner():
                             
                             if 'new_game' in info and info['new_game']:
                                 round_state = RoundState(
-                                    turn = 0,
+                                    turn_number = 0,
                                     street = 0,
                                     pips = info['pips'],
                                     stacks = info['stacks'],
@@ -83,7 +90,7 @@ class Runner():
                                 )
                             else:
                                 round_state = RoundState(
-                                    turn = round_state.turn if isinstance(round_state, RoundState) else round_state.previous_state.turn,
+                                    turn_number = round_state.turn_number if isinstance(round_state, RoundState) else round_state.previous_state.turn,
                                     street = round_state.street if isinstance(round_state, RoundState) else round_state.previous_state.street,
                                     pips = info['pips'],
                                     stacks = info['stacks'],
@@ -98,10 +105,12 @@ class Runner():
                         
                         case 'action':
                             match message['action']['verb']:
-                                case 'U':
-                                    round_state = round_state.proceed(UpAction())
-                                case 'D':
-                                    round_state = round_state.proceed(DownAction())
+                                case 'R':
+                                    round_state = round_state.proceed(RockAction())
+                                case 'P':
+                                    round_state = round_state.proceed(PaperAction())
+                                case 'S':
+                                    round_state = round_state.proceed(ScissorsAction())
                                 case _:
                                     print(f'WARN Bad action type: {message}')
                         
