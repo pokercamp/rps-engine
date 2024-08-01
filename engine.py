@@ -380,15 +380,18 @@ class Player():
                         cwd=self.path,
                     )
                     self.bot_subprocess = proc
-                    # function for bot listening
-                    def enqueue_output(out, queue):
-                        try:
-                            for line in out:
-                                queue.put(line)
-                        except ValueError:
-                            pass
-                    # start a separate bot listening thread which dies with the program
-                    Thread(target=enqueue_output, args=(proc.stdout, self.bytes_queue), daemon=True).start()
+                    
+                    if self.capture:
+                        # function for bot listening
+                        def enqueue_output(out, queue):
+                            try:
+                                for line in out:
+                                    queue.put(line)
+                            except ValueError:
+                                pass
+                        # start a separate bot listening thread which dies with the program
+                        Thread(target=enqueue_output, args=(proc.stdout, self.bytes_queue), daemon=True).start()
+                    
                     # block until we timeout or the player connects
                     client_socket, _ = server_socket.accept()
                     with client_socket:
