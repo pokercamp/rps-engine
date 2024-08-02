@@ -93,8 +93,6 @@ class Player(Bot):
         #    min_cost = min_raise - my_pip  # the cost of a minimum bet/raise
         #    max_cost = max_raise - my_pip  # the cost of a maximum bet/raise
         
-        print(legal_actions)
-        
         return random.choice(legal_actions)()
 
 
