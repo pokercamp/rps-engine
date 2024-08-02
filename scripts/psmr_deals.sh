@@ -24,14 +24,14 @@ threshold2=$(echo "4294967295 * $probability2" | bc | cut -d'.' -f1)
 
 while true; do
     if (( $(od -An -N4 -tu4 /dev/urandom) < threshold1 )); then
-        num1=3
-    else
         num1=2
+    else
+        num1=3
     fi
     if (( $(od -An -N4 -tu4 /dev/urandom) < threshold2 )); then
-        num2=3
-    else
         num2=2
+    else
+        num2=3
     fi
     echo "$num1,$num2"
 done

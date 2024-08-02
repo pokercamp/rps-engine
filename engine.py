@@ -217,7 +217,13 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         return {}
 
     def legal_actions(self):
-        return {RockAction, PaperAction, ScissorsAction} if self.hands[self.turn_number] == 3 else {PaperAction, ScissorsAction}
+        match (self.hands[self.turn_number], self.turn_number):
+            case (3, 0) | (3, 1):
+                return {RockAction, PaperAction, ScissorsAction}
+            case 2, 0:
+                return {PaperAction, ScissorsAction}
+            case 2, 1:
+                return {RockAction, PaperAction}
 
     def raise_bounds(self):
         return (0, 0)  # Not used in RPMS, but kept for compatibility
