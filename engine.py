@@ -550,11 +550,11 @@ class Match():
             self.log.append(f'{player.name} awarded {round_state.deltas[seat]:+d}')
             for held_action_message in self.held_action_messages:
                 player.append(held_action_message)
-            self.held_action_messages = []
             player.append(message(
                 'payoff',
                 payoff = round_state.deltas[seat],
             ))
+        self.held_action_messages = []
 
     def run_round(self, players):
         round_state = RoundState.new(duplicate_file = self.duplicate_file)
