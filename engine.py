@@ -550,6 +550,7 @@ class Match():
             self.log.append(f'{player.name} awarded {round_state.deltas[seat]:+d}')
             for held_action_message in self.held_action_messages:
                 player.append(held_action_message)
+            self.held_action_messages = []
             player.append(message(
                 'payoff',
                 payoff = round_state.deltas[seat],
