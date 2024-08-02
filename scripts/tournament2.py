@@ -75,7 +75,7 @@ def run_games(players_csv, output_dir, n_rounds, probs):
                     continue
             
             print(f'Match {p1_name} vs {p2_name} with ({x},{y})')
-            cmd = f"python {engine_path} -p1 {p1_name} {p1_path} -p2 {p2_name} {p2_path} -o {output_dir} -n {n_rounds} --duplicate {get_duplicate_filename(duplicate_dir, x, y, n_rounds)}"
+            cmd = f"python {engine_path} -p1 {p1_name} {p1_path} -p2 {p2_name} {p2_path} -o {output_dir} -n {n_rounds} --no-switch-seats --duplicate {get_duplicate_filename(duplicate_dir, x, y, n_rounds)}"
             subprocess.run(cmd, shell=True, executable='/bin/bash')
             print('')
 
