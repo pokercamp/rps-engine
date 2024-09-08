@@ -46,7 +46,7 @@ class Runner():
 
     def run(self):
         '''
-        Reconstructs the game tree based on the action history received from the engine.
+        Reconstructs the game based on the actions received from the engine.
         '''
         match_clock = None
         results = [None, None]
