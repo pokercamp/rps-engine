@@ -380,7 +380,7 @@ class Player():
                 self.game_clock = 0.
             except (IndexError, KeyError, ValueError):
                 game_log.append(f'Response from {self.name} misformatted: ' + str(clause))
-        return ScissorsAction()
+        return random.choice([RockAction(), PaperAction(), ScissorsAction()])
 
 class Match():
     '''
