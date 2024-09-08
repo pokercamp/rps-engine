@@ -1,5 +1,5 @@
 '''
-Poker Camp Game Engine
+Poker Camp Game Engine - version 2024/09/08 for RPS Hackathon @ Fractal
 (c) 2024 poker.camp; all rights reserved.
 
 Derived from: 6.176 MIT Pokerbots Game Engine at mitpokerbots/engine
@@ -25,73 +25,8 @@ import random
 
 random.seed(68127)
 
-class Card(int):
-    def __new__(cls, value):
-        assert value == 2 or value == 3
-        return super(Card, cls).__new__(cls, value)
-
-    @classmethod
-    def from_string(cls, s):
-        return cls(int(s))
-
-class PSMRDeck:
-    duplicate_file = None
-    duplicate_id = ''
-    duplicate_file_iterator = None
-    
-    @classmethod
-    def get_file_info_hash(cls, filename):
-        full_path = os.path.abspath(filename)
-        mtime = os.path.getmtime(full_path)
-        return hashlib.sha256(f"{full_path}|{mtime}".encode()).hexdigest()
-    
-    @classmethod
-    def ensure_duplicate_file_iterator(cls, duplicate_file):
-        # for now, requires that the duplicate file never change
-        if cls.duplicate_file_iterator is None:
-            if duplicate_file:
-                if cls.duplicate_file is None:
-                    cls.duplicate_file = duplicate_file
-                    cls.duplicate_id = f'.D{cls.get_file_info_hash(duplicate_file)[:6]}'
-                else:
-                    assert cls.duplicate_file == duplicate_file
-                
-                try:
-                    cls.duplicate_file_iterator = open(duplicate_file, 'r')
-                except IOError:
-                    print(f"WARN: Could not open file {duplicate_file}. Using default shuffled deck.")
-                    cls.duplicate_file_iterator = None
-
-    @classmethod
-    def done(cls):
-        if cls.duplicate_file_iterator:
-            cls.duplicate_file_iterator.close()
-            cls.duplicate_file_iterator = None
-    
-    def __init__(self, *, duplicate_file):
-        PSMRDeck.ensure_duplicate_file_iterator(duplicate_file)
-        
-        if duplicate_file and PSMRDeck.duplicate_file_iterator:
-            line = next(PSMRDeck.duplicate_file_iterator, None)
-            if line:
-                self.cards = [Card.from_string(card) for card in line.strip().split(',')]
-            else:
-                print(f"WARN: Ran out of entries (lines) in {duplicate_file}. Using default shuffled deck.")
-                self.use_default_deck()
-        else:
-            self.use_default_deck()
-        
-        self.index = 0
-
-    def use_default_deck(self):
-        self.cards = [Card(3), Card(3)]
-    
-    def deal(self):
-        if self.index >= len(self.cards):
-            raise ValueError("No more cards to deal")
-        card = self.cards[self.index]
-        self.index += 1
-        return card
+STARTING_STACK = 0
+ANTE = 1
 
 class RockAction(namedtuple('RockAction', [])):
     def __hash__(self):
@@ -116,14 +51,10 @@ class ScissorsAction(namedtuple('ScissorsAction', [])):
         return isinstance(other, ScissorsAction)
     def __repr__(self):
         return 'Scissors'
-    
+
 TerminalState = namedtuple('TerminalState', ['deltas', 'previous_state'])
 
-STREET_NAMES = []
-
 DECODE = {'R': RockAction, 'P': PaperAction, 'S': ScissorsAction}
-CCARDS = lambda card: '{}'.format(card)
-PCARDS = lambda card: '[{}]'.format(card)
 PVALUE = lambda name, value: f', {name} ({value:+d})'
 STATUS = lambda players: ''.join([PVALUE(p.name, p.bankroll) for p in players])
 
@@ -166,9 +97,8 @@ def message(type, **kwargs):
 
 class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'stacks', 'hands', 'deck', 'action_history', 'previous_state'])):
     @staticmethod
-    def new(duplicate_file):
-        deck = PSMRDeck(duplicate_file = duplicate_file)
-        hands = [deck.deal(), deck.deal()]
+    def new():
+        hands = [None, None]
         pips = [ANTE, ANTE]
         stacks = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
         return RoundState(
@@ -177,7 +107,7 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
             pips=pips,
             stacks=stacks,
             hands=hands,
-            deck=deck,
+            deck=None,
             action_history=[],
             previous_state=None,
         )
@@ -208,28 +138,11 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         
         return TerminalState(deltas, self)
     
-    def visible_hands(self, seat):
-        ret = [None for _ in self.hands]
-        ret[seat] = self.hands[seat]
-        return ret
-    
     def public(self):
         return {}
 
     def legal_actions(self):
-        match (self.hands[self.turn_number], self.turn_number):
-            case (3, 0) | (3, 1):
-                return {RockAction, PaperAction, ScissorsAction}
-            case 2, 0:
-                return {PaperAction, ScissorsAction}
-            case 2, 1:
-                return {RockAction, PaperAction}
-
-    def raise_bounds(self):
-        return (0, 0)  # Not used in RPMS, but kept for compatibility
-
-    def proceed_street(self):
-        return self.showdown()  # RPMS is single street
+        return {RockAction, PaperAction, ScissorsAction}
 
     def proceed(self, action):
         state = RoundState(
@@ -244,7 +157,7 @@ class RoundState(namedtuple('_RoundState', ['turn_number', 'street', 'pips', 'st
         )
         
         if self.turn_number == 1:
-            return state.proceed_street()
+            return state.showdown()
         else:
             return state
         
@@ -480,7 +393,6 @@ class Match():
         output_path,
         n_rounds,
         switch_seats=True,
-        duplicate_file=None,
         secrets=None,
         capture=True,
     ):
@@ -496,12 +408,11 @@ class Match():
         if n_rounds is not None:
             NUM_ROUNDS = int(n_rounds)
         self.switch_seats = switch_seats
-        self.duplicate_file = duplicate_file
         self.secrets = None if secrets is None else secrets.strip().split(',')
         assert self.secrets is None or len(self.secrets) == 2
         self.capture = capture
         
-        self.log = ['Poker Camp Game Engine - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
+        self.log = ['Poker Camp Game Engine - RPS Hackathon @ Fractal - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME]
         
         self.held_action_messages = []
 
@@ -513,10 +424,8 @@ class Match():
             for seat, player in enumerate(players):
                 self.log.append(f'{player.name} posts the ante of {ANTE}')
             for seat, player in enumerate(players):
-                self.log.append(f'{player.name} dealt {PCARDS(round_state.hands[seat])}')
                 player.append(message('info', info={
                         'seat': seat,
-                        'hands': round_state.visible_hands(seat),
                         **({'secret': self.secrets[seat]} if self.secrets else {}),
                         'new_game': True,
                 }))
@@ -557,9 +466,8 @@ class Match():
         self.held_action_messages = []
 
     def run_round(self, players):
-        round_state = RoundState.new(duplicate_file = self.duplicate_file)
+        round_state = RoundState.new()
         while not isinstance(round_state, TerminalState):
-            # print(round_state)
             self.send_round_state(players, round_state)
             active = round_state.turn_number % 2
             player = players[active]
@@ -567,10 +475,8 @@ class Match():
                 round_state,
                 self.log,
             )
-            # print(action)
             self.send_action(players, active, action)
             round_state = round_state.proceed(action)
-        # print(round_state)
         self.send_terminal_state(players, round_state)
         for player, delta in zip(players, round_state.deltas):
             player.bankroll += delta
@@ -580,8 +486,7 @@ class Match():
         Runs one matchup.
         '''
         print('Starting the game engine...')
-        PSMRDeck.ensure_duplicate_file_iterator(self.duplicate_file)
-        MATCH_DIR = f'{LOGS_PATH}/{PLAYER_1_NAME}.{PLAYER_2_NAME}{PSMRDeck.duplicate_id}'
+        MATCH_DIR = f'{LOGS_PATH}/{PLAYER_1_NAME}.{PLAYER_2_NAME}'
         Path(MATCH_DIR).mkdir(parents=True, exist_ok=True)
         players = [
             Player(PLAYER_1_NAME, PLAYER_1_PATH, MATCH_DIR, capture=self.capture, ),
@@ -614,7 +519,7 @@ class Match():
             with open(f'{MATCH_DIR}/{name}.msg.player.txt', 'w') as log_file:
                 log_file.write('\n'.join(players[active].response_log))
         
-        with open(f'{LOGS_PATH}/{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}{PSMRDeck.duplicate_id}.txt', 'w') as score_file:
+        with open(f'{LOGS_PATH}/{SCORE_FILENAME}.{PLAYER_1_NAME}.{PLAYER_2_NAME}.txt', 'w') as score_file:
             score_file.write('\n'.join([f'{p.name},{p.bankroll*100.0/NUM_ROUNDS}' for p in players]))
 
 if __name__ == '__main__':
@@ -623,10 +528,9 @@ if __name__ == '__main__':
     parser.add_argument('-p2', nargs=2, metavar=('NAME', 'FILE'), help='Name and executable for player 2')
     parser.add_argument("-o", "--output", required=True, default="logs", metavar='PATH', help="Output directory for game results")
     parser.add_argument("-n", "--n-rounds", default=1000, metavar='INT', help="Number of rounds to run per matchup")
-    parser.add_argument("--switch-seats", default=True, action=argparse.BooleanOptionalAction, help='Do players switch seats between rounds')
-    parser.add_argument("-d", "--duplicate", metavar='FILE', help='File to read decks from in duplicate mode')
+    parser.add_argument("--switch-seats", default=False, action=argparse.BooleanOptionalAction, help='Do players switch seats between rounds')
     parser.add_argument("--secrets", metavar=('STR,STR'), help='Secret info given to players at start of round')
-    parser.add_argument("--capture", default=True, action=argparse.BooleanOptionalAction, help='Capture player outputs and write them to log files')
+    parser.add_argument("--capture", default=False, action=argparse.BooleanOptionalAction, help='Capture player outputs and write them to log files')
 
     args = parser.parse_args()
     
@@ -636,9 +540,6 @@ if __name__ == '__main__':
         output_path = args.output,
         n_rounds = args.n_rounds,
         switch_seats = args.switch_seats,
-        duplicate_file = args.duplicate,
         secrets = args.secrets,
         capture = args.capture,
     ).run()
-    
-    PSMRDeck.done()

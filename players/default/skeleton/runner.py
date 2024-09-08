@@ -5,8 +5,6 @@ import argparse
 import json
 import socket
 from .actions import RockAction, PaperAction, ScissorsAction
-from .states import GameState, TerminalState, RoundState
-from .states import STARTING_STACK, ANTE
 from .bot import Bot
 
 class Runner():
@@ -14,8 +12,8 @@ class Runner():
     Interacts with the engine.
     '''
 
-    def __init__(self, pokerbot, socketfile):
-        self.pokerbot = pokerbot
+    def __init__(self, bot, socketfile):
+        self.bot = bot
         self.socketfile = socketfile
 
     def receive(self):
@@ -50,8 +48,8 @@ class Runner():
         '''
         Reconstructs the game tree based on the action history received from the engine.
         '''
-        game_state = GameState(0, 0., 1)
-        round_state = None
+        match_clock = None
+        results = [None, None]
         seat = 0
         for packet in self.receive():
             # okay to accept a single json object
@@ -64,63 +62,33 @@ class Runner():
                             pass
                         
                         case 'time':
-                            game_state = GameState(game_state.bankroll, float(message['time']), game_state.round_num)
+                            match_clock = float(message['time'])
                         
                         case 'info':
                             info = message['info']
                             seat = int(info['seat'])
-                            if 'hands' not in info:
-                                info['hands'] = [None, None]
-                            if 'pips' not in info:
-                                info['pips'] = [ANTE, ANTE]
-                            if 'stacks' not in info:
-                                info['stacks'] = [STARTING_STACK - ANTE, STARTING_STACK - ANTE]
-                            new_game = 'new_game' in info and info['new_game']
-                            
                             if 'new_game' in info and info['new_game']:
-                                round_state = RoundState(
-                                    turn_number = 0,
-                                    street = 0,
-                                    pips = info['pips'],
-                                    stacks = info['stacks'],
-                                    hands = info['hands'],
-                                    deck = None,
-                                    action_history = [],
-                                    previous_state = None,
-                                )
-                            else:
-                                round_state = RoundState(
-                                    turn_number = round_state.turn_number if isinstance(round_state, RoundState) else round_state.previous_state.turn,
-                                    street = round_state.street if isinstance(round_state, RoundState) else round_state.previous_state.street,
-                                    pips = info['pips'],
-                                    stacks = info['stacks'],
-                                    hands = info['hands'],
-                                    deck = None,
-                                    action_history = round_state.street if isinstance(round_state, RoundState) else round_state.previous_state.action_history,
-                                    previous_state = round_state,
-                                )
-                            
-                            if new_game:
-                                self.pokerbot.handle_new_round(game_state, round_state, seat)
+                                results = [None, None]
                         
                         case 'action':
                             match message['action']['verb']:
                                 case 'R':
-                                    round_state = round_state.proceed(RockAction())
+                                    results[message['seat']] = RockAction()
                                 case 'P':
-                                    round_state = round_state.proceed(PaperAction())
+                                    results[message['seat']] = PaperAction()
                                 case 'S':
-                                    round_state = round_state.proceed(ScissorsAction())
+                                    results[message['seat']] = ScissorsAction()
                                 case _:
                                     print(f'WARN Bad action type: {message}')
                         
                         case 'payoff':
-                            delta = message['payoff']
-                            deltas = [-delta, -delta]
-                            deltas[seat] = delta
-                            round_state = TerminalState(deltas, round_state)
-                            game_state = GameState(game_state.bankroll + delta, game_state.game_clock, game_state.round_num)
-                            self.pokerbot.handle_round_over(game_state, round_state, seat)
+                            payoff = message['payoff']
+                            self.bot.handle_results(
+                                my_action = results[seat],
+                                their_action = results[1-seat],
+                                my_payoff = payoff,
+                                match_clock = match_clock,
+                            )
                         
                         case 'goodbye':
                             return
@@ -131,7 +99,7 @@ class Runner():
                 except KeyError as e:
                     print(f'WARN Message missing required field "{e}": {message}')
                     continue
-            action = self.pokerbot.get_action(game_state, round_state, seat)
+            action = self.bot.get_action(match_clock = match_clock)
             self.send(action, seat)
 
 def parse_args():
@@ -143,18 +111,18 @@ def parse_args():
     parser.add_argument('port', type=int, help='Port on host to connect to')
     return parser.parse_args()
 
-def run_bot(pokerbot, args):
+def run_bot(bot, args):
     '''
-    Runs the pokerbot.
+    Runs the bot.
     '''
-    assert isinstance(pokerbot, Bot)
+    assert isinstance(bot, Bot)
     try:
         sock = socket.create_connection((args.host, args.port))
     except OSError:
         print('Could not connect to {}:{}'.format(args.host, args.port))
         return
     socketfile = sock.makefile('rw')
-    runner = Runner(pokerbot, socketfile)
+    runner = Runner(bot, socketfile)
     runner.run()
     socketfile.close()
     sock.close()
